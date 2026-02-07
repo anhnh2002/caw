@@ -50,3 +50,6 @@ Thumbs.db
 
 # Claude
 .claude/
+
+# caw session data
+caw_data/

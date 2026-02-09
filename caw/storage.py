@@ -45,7 +45,8 @@ class JsonlWriter:
                 "system_prompt": trajectory.system_prompt,
                 "reasoning": trajectory.reasoning,
                 "mcp_servers": [
-                    {"name": s.name, "command": s.command, "args": s.args, "env": s.env} for s in trajectory.mcp_servers
+                    {"name": s.name, "command": s.command, "args": s.args, "env": s.env, "url": s.url}
+                    for s in trajectory.mcp_servers
                 ],
                 "metadata": trajectory.metadata,
             }

@@ -2,16 +2,47 @@
 
 from __future__ import annotations
 
+import atexit
 import json
 import os
 import subprocess
 import tempfile
+import threading
 import uuid
 from typing import Any
 
-from caw.display import Display
+from caw.display import Display, get_global_display
 from caw.models import ContentBlock, MCPServer, TextBlock, ThinkingBlock, ToolUse, Trajectory, Turn, UsageStats
 from caw.provider import Provider, ProviderSession
+
+# -- Subprocess registry + atexit cleanup -------------------------------------
+
+_active_processes: set[subprocess.Popen] = set()
+_process_lock = threading.Lock()
+
+
+def _register_process(proc: subprocess.Popen) -> None:
+    with _process_lock:
+        _active_processes.add(proc)
+
+
+def _unregister_process(proc: subprocess.Popen) -> None:
+    with _process_lock:
+        _active_processes.discard(proc)
+
+
+def _cleanup_processes() -> None:
+    """Kill all tracked subprocesses at interpreter exit."""
+    with _process_lock:
+        procs = list(_active_processes)
+    for proc in procs:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_processes)
 
 
 class ClaudeCodeSession(ProviderSession):
@@ -21,14 +52,12 @@ class ClaudeCodeSession(ProviderSession):
         self,
         mcp_servers: list[MCPServer],
         model: str | None = None,
-        display: Display | None = None,
         system_prompt: str | None = None,
         session_id: str | None = None,
     ) -> None:
         self._session_id = session_id or str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
-        self._display = display
         self._system_prompt = system_prompt
         self._has_sent = False
         self._turns: list[Turn] = []
@@ -50,9 +79,12 @@ class ClaudeCodeSession(ProviderSession):
 
         config: dict[str, Any] = {"mcpServers": {}}
         for srv in self._mcp_servers:
-            entry: dict[str, Any] = {"command": srv.command, "args": srv.args}
-            if srv.env:
-                entry["env"] = srv.env
+            if srv.url:
+                entry: dict[str, Any] = {"type": "http", "url": srv.url}
+            else:
+                entry = {"command": srv.command, "args": srv.args}
+                if srv.env:
+                    entry["env"] = srv.env
             config["mcpServers"][srv.name] = entry
 
         fd, path = tempfile.mkstemp(suffix=".json", prefix="caw_mcp_")
@@ -62,18 +94,20 @@ class ClaudeCodeSession(ProviderSession):
         return path
 
     # ------------------------------------------------------------------
-    # Core send
+    # Core send (streaming Popen)
     # ------------------------------------------------------------------
 
     def send(self, message: str) -> Turn:
-        if self._display:
+        display = get_global_display()
+
+        if display:
             if not self._has_sent:
-                self._display.on_metadata(
+                display.on_metadata(
                     agent="claude_code",
                     model=self._model or "",
                     session=self._session_id,
                 )
-            self._display.on_user_message(message)
+            display.on_user_message(message)
 
         cmd = [
             "claude",
@@ -98,108 +132,147 @@ class ClaudeCodeSession(ProviderSession):
         if mcp_path:
             cmd += ["--mcp-config", mcp_path]
 
+        # Accumulated state for event processing
+        blocks: list[ContentBlock] = []
+        tool_blocks: dict[str, ToolUse] = {}
+        usage = UsageStats()
+        duration_ms = 0
+        raw_lines: list[str] = []
+
         try:
-            proc = subprocess.run(
+            proc = subprocess.Popen(
                 cmd,
-                input=message,
-                capture_output=True,
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 text=True,
-                timeout=600,
             )
         except FileNotFoundError:
             raise RuntimeError("claude CLI not found. Install it with: npm install -g @anthropic-ai/claude-code")
 
-        stdout = proc.stdout or ""
-        stderr = proc.stderr or ""
-        self._last_raw_output = stdout
+        _register_process(proc)
+        try:
+            # Write message to stdin, then close to signal EOF
+            proc.stdin.write(message)  # type: ignore[union-attr]
+            proc.stdin.close()  # type: ignore[union-attr]
 
-        if proc.returncode != 0 and not stdout.strip():
-            raise RuntimeError(f"claude CLI exited with code {proc.returncode}: {stderr}")
+            # Stream stdout line by line
+            for line in proc.stdout:  # type: ignore[union-attr]
+                line = line.rstrip("\n")
+                raw_lines.append(line)
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    event = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+
+                result = self._process_event(event, blocks, tool_blocks, display)
+                if result is not None:
+                    usage, duration_ms = result
+
+            # Read stderr after stdout is exhausted
+            stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]
+            proc.wait()
+
+            self._last_raw_output = "\n".join(raw_lines)
+
+            if proc.returncode != 0 and not raw_lines:
+                raise RuntimeError(f"claude CLI exited with code {proc.returncode}: {stderr}")
+
+        except (KeyboardInterrupt, Exception):
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            _unregister_process(proc)
 
         self._has_sent = True
 
-        # Parse JSONL output
-        turn = self._parse_output(message, stdout)
+        turn = Turn(input=message, output=blocks, usage=usage, duration_ms=duration_ms)
+
+        if display:
+            display.on_turn_end(turn.result, usage, duration_ms)
+
         self._turns.append(turn)
         self._total_usage = self._total_usage + turn.usage
         self._total_duration_ms += turn.duration_ms
         return turn
 
     # ------------------------------------------------------------------
-    # JSONL parsing
+    # Per-event processing
     # ------------------------------------------------------------------
 
-    def _parse_output(self, user_message: str, stdout: str) -> Turn:
-        blocks: list[ContentBlock] = []
-        tool_blocks: dict[str, ToolUse] = {}  # tool_use_id -> ToolUse block
-        usage = UsageStats()
-        duration_ms = 0
+    def _process_event(
+        self,
+        event: dict[str, Any],
+        blocks: list[ContentBlock],
+        tool_blocks: dict[str, ToolUse],
+        display: Display | None,
+    ) -> tuple[UsageStats, int] | None:
+        """Process a single JSONL event. Returns (usage, duration_ms) on 'result' events."""
+        event_type = event.get("type")
 
-        for line in stdout.splitlines():
-            line = line.strip()
-            if not line:
-                continue
-            try:
-                event = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+        if event_type == "system" and event.get("subtype") == "init":
+            if not self._model:
+                self._model = event.get("model", "")
+                if display and self._model:
+                    display.on_metadata(model=self._model)
 
-            event_type = event.get("type")
+        elif event_type == "assistant":
+            new_blocks = self._parse_assistant_blocks(event)
+            for block in new_blocks:
+                blocks.append(block)
+                if display:
+                    if isinstance(block, TextBlock):
+                        display.on_text(block)
+                    elif isinstance(block, ThinkingBlock):
+                        display.on_thinking(block)
+                    elif isinstance(block, ToolUse):
+                        display.on_tool_call(block)
+                if isinstance(block, ToolUse):
+                    tool_blocks[block.id] = block
 
-            if event_type == "system" and event.get("subtype") == "init":
-                if not self._model:
-                    self._model = event.get("model", "")
-                    if self._display and self._model:
-                        self._display.on_metadata(model=self._model)
+        elif event_type == "user":
+            # User events carry tool results — pair eagerly
+            msg_data = event.get("message", {})
+            for content in msg_data.get("content", []):
+                if content.get("type") == "tool_result":
+                    tid = content.get("tool_use_id", "")
+                    if tid:
+                        text_parts: list[str] = []
+                        raw_content = content.get("content", "")
+                        if isinstance(raw_content, str):
+                            text_parts.append(raw_content)
+                        elif isinstance(raw_content, list):
+                            for part in raw_content:
+                                if isinstance(part, dict) and part.get("type") == "text":
+                                    text_parts.append(part.get("text", ""))
+                        output = "\n".join(text_parts)
+                        # HTTP MCP transport wraps results in {"result": "..."}
+                        try:
+                            parsed = json.loads(output)
+                            if isinstance(parsed, dict) and "result" in parsed:
+                                output = parsed["result"]
+                        except (json.JSONDecodeError, TypeError, ValueError):
+                            pass
+                        is_error = content.get("is_error", False)
 
-            elif event_type == "assistant":
-                new_blocks = self._parse_assistant_blocks(event)
-                for block in new_blocks:
-                    blocks.append(block)
-                    if self._display:
-                        if isinstance(block, TextBlock):
-                            self._display.on_text(block)
-                        elif isinstance(block, ThinkingBlock):
-                            self._display.on_thinking(block)
-                        elif isinstance(block, ToolUse):
-                            self._display.on_tool_call(block)
-                    if isinstance(block, ToolUse):
-                        tool_blocks[block.id] = block
+                        if tid in tool_blocks:
+                            tool_blocks[tid].output = output
+                            tool_blocks[tid].is_error = is_error
+                            if display:
+                                display.on_tool_result(tool_blocks[tid])
 
-            elif event_type == "user":
-                # User events carry tool results — pair eagerly
-                msg_data = event.get("message", {})
-                for content in msg_data.get("content", []):
-                    if content.get("type") == "tool_result":
-                        tid = content.get("tool_use_id", "")
-                        if tid:
-                            text_parts: list[str] = []
-                            raw_content = content.get("content", "")
-                            if isinstance(raw_content, str):
-                                text_parts.append(raw_content)
-                            elif isinstance(raw_content, list):
-                                for part in raw_content:
-                                    if isinstance(part, dict) and part.get("type") == "text":
-                                        text_parts.append(part.get("text", ""))
-                            output = "\n".join(text_parts)
-                            is_error = content.get("is_error", False)
+        elif event_type == "result":
+            return self._parse_usage(event), event.get("duration_ms", 0)
 
-                            if tid in tool_blocks:
-                                tool_blocks[tid].output = output
-                                tool_blocks[tid].is_error = is_error
-                                if self._display:
-                                    self._display.on_tool_result(tool_blocks[tid])
+        return None
 
-            elif event_type == "result":
-                usage = self._parse_usage(event)
-                duration_ms = event.get("duration_ms", 0)
-
-        turn = Turn(input=user_message, output=blocks, usage=usage, duration_ms=duration_ms)
-
-        if self._display:
-            self._display.on_turn_end(turn.result, usage, duration_ms)
-
-        return turn
+    # ------------------------------------------------------------------
+    # Static helpers
+    # ------------------------------------------------------------------
 
     @staticmethod
     def _parse_assistant_blocks(event: dict[str, Any]) -> list[ContentBlock]:
@@ -284,13 +357,11 @@ class ClaudeCodeProvider(Provider):
 
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ClaudeCodeSession:
         model = kwargs.get("model")
-        display = kwargs.get("display")
         system_prompt = kwargs.get("system_prompt")
         session_id = kwargs.get("session_id")
         return ClaudeCodeSession(
             mcp_servers=mcp_servers,
             model=model,
-            display=display,
             system_prompt=system_prompt,
             session_id=session_id,
         )

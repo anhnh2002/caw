@@ -8,12 +8,17 @@ from typing import Any, Union
 
 @dataclass
 class MCPServer:
-    """Configuration for an MCP server."""
+    """Configuration for an MCP server.
+
+    For stdio transport, set ``command``/``args``/``env``.
+    For HTTP transport, set ``url`` (command/args/env are ignored).
+    """
 
     name: str
-    command: str
+    command: str = ""
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
+    url: str = ""
 
 
 @dataclass
@@ -216,7 +221,8 @@ class Trajectory:
             "system_prompt": self.system_prompt,
             "reasoning": self.reasoning,
             "mcp_servers": [
-                {"name": s.name, "command": s.command, "args": s.args, "env": s.env} for s in self.mcp_servers
+                {"name": s.name, "command": s.command, "args": s.args, "env": s.env, "url": s.url}
+                for s in self.mcp_servers
             ],
             "turns": [t.to_dict() for t in self.turns],
             "usage": self.usage.to_dict(),
@@ -240,6 +246,7 @@ class Trajectory:
                     command=s.get("command", ""),
                     args=s.get("args", []),
                     env=s.get("env", {}),
+                    url=s.get("url", ""),
                 )
                 for s in d.get("mcp_servers", [])
             ],

@@ -27,6 +27,7 @@ from caw.mcp import (
     mcp_tool,
     register_tool,
 )
+from caw.toolkit import ToolKit, tool
 
 # Auto-register built-in providers
 register_provider("claude_code", ClaudeCodeProvider)
@@ -60,4 +61,6 @@ __all__ = [
     "mcp_tool",
     "register_provider",
     "register_tool",
+    "tool",
+    "ToolKit",
 ]

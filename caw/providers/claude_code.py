@@ -23,8 +23,9 @@ class ClaudeCodeSession(ProviderSession):
         model: str | None = None,
         display: Display | None = None,
         system_prompt: str | None = None,
+        session_id: str | None = None,
     ) -> None:
-        self._session_id = str(uuid.uuid4())
+        self._session_id = session_id or str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
         self._display = display
@@ -80,6 +81,7 @@ class ClaudeCodeSession(ProviderSession):
             "--verbose",
             "--output-format",
             "stream-json",
+            "--dangerously-skip-permissions",
         ]
 
         if self._model:
@@ -258,6 +260,8 @@ class ClaudeCodeSession(ProviderSession):
         return Trajectory(
             agent="claude_code",
             model=self._model or "",
+            system_prompt=self._system_prompt or "",
+            mcp_servers=list(self._mcp_servers),
             turns=list(self._turns),
             usage=self._total_usage,
             duration_ms=self._total_duration_ms,
@@ -282,4 +286,11 @@ class ClaudeCodeProvider(Provider):
         model = kwargs.get("model")
         display = kwargs.get("display")
         system_prompt = kwargs.get("system_prompt")
-        return ClaudeCodeSession(mcp_servers=mcp_servers, model=model, display=display, system_prompt=system_prompt)
+        session_id = kwargs.get("session_id")
+        return ClaudeCodeSession(
+            mcp_servers=mcp_servers,
+            model=model,
+            display=display,
+            system_prompt=system_prompt,
+            session_id=session_id,
+        )

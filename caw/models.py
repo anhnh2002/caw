@@ -17,6 +17,19 @@ class MCPServer:
 
 
 @dataclass
+class AgentSpec:
+    """Configuration for a subagent."""
+
+    name: str = ""
+    description: str = ""
+    system_prompt: str = ""
+    model: str = ""
+    reasoning: str = ""
+    mcp_servers: list[MCPServer] = field(default_factory=list)
+    metadata: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
 class MCPTool:
     """Descriptor for a tool provided by an MCP server."""
 
@@ -49,6 +62,7 @@ class ToolUse:
     arguments: dict[str, Any] = field(default_factory=dict)
     output: str = ""
     is_error: bool = False
+    subagent_trajectory: Trajectory | None = None
 
 
 ContentBlock = Union[TextBlock, ThinkingBlock, ToolUse]
@@ -78,6 +92,25 @@ class UsageStats:
             cost_usd=self.cost_usd + other.cost_usd,
         )
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input_tokens": self.input_tokens,
+            "output_tokens": self.output_tokens,
+            "cache_read_tokens": self.cache_read_tokens,
+            "cache_write_tokens": self.cache_write_tokens,
+            "cost_usd": self.cost_usd,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> UsageStats:
+        return cls(
+            input_tokens=d.get("input_tokens", 0),
+            output_tokens=d.get("output_tokens", 0),
+            cache_read_tokens=d.get("cache_read_tokens", 0),
+            cache_write_tokens=d.get("cache_write_tokens", 0),
+            cost_usd=d.get("cost_usd", 0.0),
+        )
+
 
 @dataclass
 class Turn:
@@ -101,13 +134,39 @@ class Turn:
         """All tool calls made during this turn."""
         return [b for b in self.output if isinstance(b, ToolUse)]
 
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "input": self.input,
+            "output": [_block_to_dict(b) for b in self.output],
+            "usage": self.usage.to_dict(),
+            "duration_ms": self.duration_ms,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Turn:
+        return cls(
+            input=d.get("input", ""),
+            output=[_block_from_dict(b) for b in d.get("output", [])],
+            usage=UsageStats.from_dict(d.get("usage", {})),
+            duration_ms=d.get("duration_ms", 0),
+        )
+
 
 @dataclass
 class Trajectory:
-    """Complete record of a session."""
+    """Complete record of a session.
+
+    ``usage`` tracks this agent's own token usage. Use ``total_usage`` to get
+    the accumulated usage including all nested subagent trajectories.
+    """
 
     agent: str
     model: str = ""
+    session_id: str = ""
+    created_at: str = ""
+    system_prompt: str = ""
+    reasoning: str = ""
+    mcp_servers: list[MCPServer] = field(default_factory=list)
     turns: list[Turn] = field(default_factory=list)
     usage: UsageStats = field(default_factory=UsageStats)
     duration_ms: int = 0
@@ -127,3 +186,108 @@ class Trajectory:
     @property
     def total_tool_calls(self) -> int:
         return sum(len(t.tool_calls) for t in self.turns)
+
+    @property
+    def total_usage(self) -> UsageStats:
+        """Accumulated usage: own + all nested subagent trajectories (recursive)."""
+        total = self.usage
+        for turn in self.turns:
+            for block in turn.output:
+                if isinstance(block, ToolUse) and block.subagent_trajectory:
+                    total = total + block.subagent_trajectory.total_usage
+        return total
+
+    @property
+    def subagent_trajectories(self) -> list[Trajectory]:
+        """All subagent trajectories across all turns."""
+        trajs: list[Trajectory] = []
+        for turn in self.turns:
+            for block in turn.output:
+                if isinstance(block, ToolUse) and block.subagent_trajectory:
+                    trajs.append(block.subagent_trajectory)
+        return trajs
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "agent": self.agent,
+            "model": self.model,
+            "session_id": self.session_id,
+            "created_at": self.created_at,
+            "system_prompt": self.system_prompt,
+            "reasoning": self.reasoning,
+            "mcp_servers": [
+                {"name": s.name, "command": s.command, "args": s.args, "env": s.env} for s in self.mcp_servers
+            ],
+            "turns": [t.to_dict() for t in self.turns],
+            "usage": self.usage.to_dict(),
+            "total_usage": self.total_usage.to_dict(),
+            "duration_ms": self.duration_ms,
+            "metadata": self.metadata,
+        }
+
+    @classmethod
+    def from_dict(cls, d: dict[str, Any]) -> Trajectory:
+        return cls(
+            agent=d.get("agent", ""),
+            model=d.get("model", ""),
+            session_id=d.get("session_id", ""),
+            created_at=d.get("created_at", ""),
+            system_prompt=d.get("system_prompt", ""),
+            reasoning=d.get("reasoning", ""),
+            mcp_servers=[
+                MCPServer(
+                    name=s.get("name", ""),
+                    command=s.get("command", ""),
+                    args=s.get("args", []),
+                    env=s.get("env", {}),
+                )
+                for s in d.get("mcp_servers", [])
+            ],
+            turns=[Turn.from_dict(t) for t in d.get("turns", [])],
+            usage=UsageStats.from_dict(d.get("usage", {})),
+            duration_ms=d.get("duration_ms", 0),
+            metadata=d.get("metadata", {}),
+        )
+
+
+# -- Serialization helpers for content blocks --------------------------------
+
+
+def _block_to_dict(block: ContentBlock) -> dict[str, Any]:
+    if isinstance(block, TextBlock):
+        return {"type": "text", "text": block.text}
+    elif isinstance(block, ThinkingBlock):
+        return {"type": "thinking", "text": block.text}
+    else:  # ToolUse
+        d: dict[str, Any] = {
+            "type": "tool_use",
+            "id": block.id,
+            "name": block.name,
+            "arguments": block.arguments,
+            "output": block.output,
+        }
+        if block.is_error:
+            d["is_error"] = True
+        if block.subagent_trajectory:
+            d["subagent_trajectory"] = block.subagent_trajectory.to_dict()
+        return d
+
+
+def _block_from_dict(d: dict[str, Any]) -> ContentBlock:
+    btype = d.get("type", "")
+    if btype == "text":
+        return TextBlock(text=d.get("text", ""))
+    elif btype == "thinking":
+        return ThinkingBlock(text=d.get("text", ""))
+    else:  # tool_use
+        sub_traj = None
+        if d.get("subagent_trajectory"):
+            sub_traj = Trajectory.from_dict(d["subagent_trajectory"])
+        return ToolUse(
+            id=d.get("id", ""),
+            name=d.get("name", ""),
+            arguments=d.get("arguments", {}),
+            output=d.get("output", ""),
+            is_error=d.get("is_error", False),
+            subagent_trajectory=sub_traj,
+        )

@@ -2,148 +2,182 @@
 
 from __future__ import annotations
 
+import fcntl
 import json
-from dataclasses import asdict
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from caw.models import MCPServer, TextBlock, ThinkingBlock, ToolUse, Trajectory
+from caw.models import TextBlock, ThinkingBlock, ToolUse, Trajectory, Turn
+
+
+class JsonlWriter:
+    """Append-only JSONL writer with file locking for concurrent safety.
+
+    When *subagent* is set, every entry is tagged with ``"subagent": name``
+    so readers can distinguish parent vs. subagent events.
+    """
+
+    def __init__(self, path: str | Path, *, subagent: str | None = None) -> None:
+        self._path = Path(path)
+        self._subagent = subagent
+
+    def append(self, entry: dict[str, Any]) -> None:
+        """Append a single JSON object as one line (file-locked)."""
+        if self._subagent:
+            entry = {**entry, "subagent": self._subagent}
+        with open(self._path, "a", encoding="utf-8") as f:
+            fcntl.flock(f, fcntl.LOCK_EX)
+            f.write(json.dumps(entry) + "\n")
+
+    # ------------------------------------------------------------------
+    # High-level helpers
+    # ------------------------------------------------------------------
+
+    def write_metadata(self, trajectory: Trajectory) -> None:
+        """Write a metadata entry (typically once at session start)."""
+        self.append(
+            {
+                "type": "metadata",
+                "session_id": trajectory.session_id,
+                "created_at": trajectory.created_at,
+                "agent": trajectory.agent,
+                "model": trajectory.model,
+                "system_prompt": trajectory.system_prompt,
+                "reasoning": trajectory.reasoning,
+                "mcp_servers": [
+                    {"name": s.name, "command": s.command, "args": s.args, "env": s.env} for s in trajectory.mcp_servers
+                ],
+                "metadata": trajectory.metadata,
+            }
+        )
+
+    def write_turn_events(self, turn: Turn, turn_index: int) -> None:
+        """Write per-event JSONL lines for a completed turn."""
+        # User message
+        self.append({"type": "user", "message": turn.input, "turn_index": turn_index})
+
+        # Content blocks — mirrors Display event order
+        for block in turn.output:
+            if isinstance(block, ThinkingBlock):
+                self.append(
+                    {
+                        "type": "thinking",
+                        "text": block.text,
+                        "turn_index": turn_index,
+                    }
+                )
+            elif isinstance(block, TextBlock):
+                self.append(
+                    {
+                        "type": "text",
+                        "text": block.text,
+                        "turn_index": turn_index,
+                    }
+                )
+            elif isinstance(block, ToolUse):
+                self.append(
+                    {
+                        "type": "tool_call",
+                        "id": block.id,
+                        "name": block.name,
+                        "arguments": block.arguments,
+                        "turn_index": turn_index,
+                    }
+                )
+                result_entry: dict[str, Any] = {
+                    "type": "tool_result",
+                    "id": block.id,
+                    "name": block.name,
+                    "output": block.output,
+                    "is_error": block.is_error,
+                    "turn_index": turn_index,
+                }
+                if block.subagent_trajectory:
+                    result_entry["subagent_trajectory"] = block.subagent_trajectory.to_dict()
+                self.append(result_entry)
+
+        # Turn-end stats
+        self.append(
+            {
+                "type": "turn_end",
+                "turn_index": turn_index,
+                "usage": turn.usage.to_dict(),
+                "duration_ms": turn.duration_ms,
+            }
+        )
 
 
 class SessionStore:
-    """Persists raw session data to a directory on disk.
+    """Persists session data to a directory on disk.
 
     Layout::
 
         <data_dir>/sessions/<session_id>/
-            config.json
+            traj.jsonl          # incremental append-only event log
+            trajectory.json     # full trajectory, overwritten after each turn
             turns/
                 000_input.txt
                 000_raw_output.jsonl
-                001_input.txt
-                001_raw_output.jsonl
     """
 
     def __init__(self, data_dir: str | Path, session_id: str) -> None:
-        self._session_id = session_id
         self._session_dir = Path(data_dir) / "sessions" / session_id
         self._turns_dir = self._session_dir / "turns"
         self._turns_dir.mkdir(parents=True, exist_ok=True)
         self._turn_counter = 0
+        self._jsonl = JsonlWriter(self._session_dir / "traj.jsonl")
 
     @property
     def session_dir(self) -> Path:
         """Path to this session's directory."""
         return self._session_dir
 
+    @property
+    def jsonl_path(self) -> Path:
+        """Path to the traj.jsonl file."""
+        return self._jsonl._path
+
     # ------------------------------------------------------------------
-    # config.json
+    # JSONL delegation
     # ------------------------------------------------------------------
 
-    def write_config(
-        self,
-        agent: str,
-        model: str,
-        mcp_servers: list[MCPServer],
-        metadata: dict[str, Any] | None = None,
-        system_prompt: str | None = None,
-    ) -> None:
-        """Write the initial config.json for this session."""
-        config: dict[str, Any] = {
-            "session_id": self._session_id,
-            "agent": agent,
-            "model": model,
-            "mcp_servers": [asdict(s) for s in mcp_servers],
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "metadata": metadata or {},
-        }
-        if system_prompt:
-            config["system_prompt"] = system_prompt
-        self._write_json(self._session_dir / "config.json", config)
+    def write_metadata(self, trajectory: Trajectory) -> None:
+        """Append a metadata entry to traj.jsonl (called once at session start)."""
+        self._jsonl.write_metadata(trajectory)
 
-    def update_config(self, **updates: Any) -> None:
-        """Read-modify-write merge into config.json."""
-        path = self._session_dir / "config.json"
-        config = self._read_json(path)
-        config.update(updates)
-        self._write_json(path, config)
+    # ------------------------------------------------------------------
+    # Trajectory
+    # ------------------------------------------------------------------
+
+    def _save_trajectory(self, trajectory: Trajectory) -> None:
+        """Overwrite trajectory.json with the full trajectory."""
+        path = self._session_dir / "trajectory.json"
+        path.write_text(json.dumps(trajectory.to_dict(), indent=2) + "\n", encoding="utf-8")
 
     def finalize(self, trajectory: Trajectory) -> None:
-        """Update config.json with final stats and write trajectory.json."""
-        self.update_config(
-            model=trajectory.model,
-            num_turns=trajectory.num_turns,
-            total_duration_ms=trajectory.duration_ms,
-            total_usage=asdict(trajectory.usage),
-        )
-        self._write_json(
-            self._session_dir / "trajectory.json",
-            self._serialize_trajectory(trajectory),
-        )
+        """Write trajectory.json with the complete session record."""
+        self._save_trajectory(trajectory)
 
     # ------------------------------------------------------------------
     # Turn files
     # ------------------------------------------------------------------
 
-    def save_turn(self, user_input: str, raw_output: str | None = None) -> None:
-        """Write turn input and (optionally) raw CLI output to disk."""
+    def append_turn(self, turn: Turn, trajectory: Trajectory, raw_output: str | None = None) -> None:
+        """Record a completed turn: event JSONL lines, trajectory snapshot, and raw files."""
         prefix = f"{self._turn_counter:03d}"
 
+        # Raw turn files
         input_path = self._turns_dir / f"{prefix}_input.txt"
-        input_path.write_text(user_input, encoding="utf-8")
+        input_path.write_text(turn.input, encoding="utf-8")
 
         if raw_output is not None:
             output_path = self._turns_dir / f"{prefix}_raw_output.jsonl"
             output_path.write_text(raw_output, encoding="utf-8")
 
+        # Per-event JSONL lines
+        self._jsonl.write_turn_events(turn, self._turn_counter)
+
+        # Full trajectory snapshot
+        self._save_trajectory(trajectory)
+
         self._turn_counter += 1
-
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
-    @staticmethod
-    def _serialize_block(block: TextBlock | ThinkingBlock | ToolUse) -> dict[str, Any]:
-        if isinstance(block, TextBlock):
-            return {"type": "text", "text": block.text}
-        elif isinstance(block, ThinkingBlock):
-            return {"type": "thinking", "text": block.text}
-        else:
-            d: dict[str, Any] = {
-                "type": "tool_use",
-                "id": block.id,
-                "name": block.name,
-                "arguments": block.arguments,
-                "output": block.output,
-            }
-            if block.is_error:
-                d["is_error"] = True
-            return d
-
-    @staticmethod
-    def _serialize_trajectory(trajectory: Trajectory) -> dict[str, Any]:
-        return {
-            "agent": trajectory.agent,
-            "model": trajectory.model,
-            "duration_ms": trajectory.duration_ms,
-            "usage": asdict(trajectory.usage),
-            "turns": [
-                {
-                    "input": turn.input,
-                    "output": [SessionStore._serialize_block(b) for b in turn.output],
-                    "usage": asdict(turn.usage),
-                    "duration_ms": turn.duration_ms,
-                }
-                for turn in trajectory.turns
-            ],
-            "metadata": trajectory.metadata,
-        }
-
-    @staticmethod
-    def _write_json(path: Path, data: dict[str, Any]) -> None:
-        path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
-
-    @staticmethod
-    def _read_json(path: Path) -> dict[str, Any]:
-        return json.loads(path.read_text(encoding="utf-8"))  # type: ignore[no-any-return]

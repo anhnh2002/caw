@@ -4,8 +4,9 @@ __version__ = "0.1.0"
 
 from caw.agent import Agent, Session, register_provider
 from caw.display import Display, DisplayMode
-from caw.storage import SessionStore
+from caw.storage import JsonlWriter, SessionStore
 from caw.models import (
+    AgentSpec,
     ContentBlock,
     MCPServer,
     MCPTool,
@@ -24,7 +25,9 @@ register_provider("claude_code", ClaudeCodeProvider)
 
 __all__ = [
     "Agent",
+    "AgentSpec",
     "ClaudeCodeProvider",
+    "JsonlWriter",
     "ContentBlock",
     "Display",
     "DisplayMode",

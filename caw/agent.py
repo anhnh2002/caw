@@ -150,6 +150,10 @@ class Agent:
         """Set the reasoning budget token (e.g. ``'medium'``)."""
         self._kwargs["reasoning"] = reasoning
 
+    def set_system_prompt(self, system_prompt: str) -> None:
+        """Set a system prompt that guides the agent's behavior for the session."""
+        self._kwargs["system_prompt"] = system_prompt
+
     def start_session(self, **kwargs: Any) -> Session:
         """Start a new interactive session with the agent."""
         merged = {**self._kwargs, **kwargs}
@@ -164,6 +168,7 @@ class Agent:
                 agent=self.provider.name,
                 model=merged.get("model", ""),
                 mcp_servers=list(self._mcp_servers),
+                system_prompt=merged.get("system_prompt"),
             )
 
         return Session(provider_session, store=store)

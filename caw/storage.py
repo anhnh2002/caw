@@ -47,6 +47,7 @@ class SessionStore:
         model: str,
         mcp_servers: list[MCPServer],
         metadata: dict[str, Any] | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         """Write the initial config.json for this session."""
         config: dict[str, Any] = {
@@ -57,6 +58,8 @@ class SessionStore:
             "created_at": datetime.now(timezone.utc).isoformat(),
             "metadata": metadata or {},
         }
+        if system_prompt:
+            config["system_prompt"] = system_prompt
         self._write_json(self._session_dir / "config.json", config)
 
     def update_config(self, **updates: Any) -> None:

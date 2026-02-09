@@ -22,11 +22,13 @@ class ClaudeCodeSession(ProviderSession):
         mcp_servers: list[MCPServer],
         model: str | None = None,
         display: Display | None = None,
+        system_prompt: str | None = None,
     ) -> None:
         self._session_id = str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
         self._display = display
+        self._system_prompt = system_prompt
         self._has_sent = False
         self._turns: list[Turn] = []
         self._total_usage = UsageStats()
@@ -85,6 +87,8 @@ class ClaudeCodeSession(ProviderSession):
 
         if not self._has_sent:
             cmd += ["--session-id", self._session_id]
+            if self._system_prompt:
+                cmd += ["--system-prompt", self._system_prompt]
         else:
             cmd += ["--resume", self._session_id]
 
@@ -277,4 +281,5 @@ class ClaudeCodeProvider(Provider):
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ClaudeCodeSession:
         model = kwargs.get("model")
         display = kwargs.get("display")
-        return ClaudeCodeSession(mcp_servers=mcp_servers, model=model, display=display)
+        system_prompt = kwargs.get("system_prompt")
+        return ClaudeCodeSession(mcp_servers=mcp_servers, model=model, display=display, system_prompt=system_prompt)

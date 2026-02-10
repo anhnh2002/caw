@@ -163,6 +163,14 @@ def _make_tool_func(method, info: dict[str, Any]):
     wrapper.__qualname__ = tool_name
     wrapper.__doc__ = info.get("description") or method.__doc__ or ""
     wrapper.__signature__ = new_sig
+    # Set __annotations__ so typing.get_type_hints() can find the Context
+    # parameter — FastMCP uses get_type_hints (not __signature__) to detect
+    # which params to strip from the input schema and inject at call time.
+    wrapper.__annotations__ = {
+        p.name: p.annotation for p in new_sig.parameters.values() if p.annotation is not inspect.Parameter.empty
+    }
+    if new_sig.return_annotation is not inspect.Signature.empty:
+        wrapper.__annotations__["return"] = new_sig.return_annotation
 
     # Attach _mcp_tool_info for register_tool()
     wrapper._mcp_tool_info = {

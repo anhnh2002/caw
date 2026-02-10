@@ -1,0 +1,388 @@
+"""Codex provider — wraps the ``codex`` CLI in JSON mode."""
+
+from __future__ import annotations
+
+import atexit
+import json
+import subprocess
+import threading
+import uuid
+from datetime import datetime, timezone
+from typing import Any
+
+from caw.display import Display, get_global_display
+from caw.models import ContentBlock, MCPServer, TextBlock, ThinkingBlock, ToolUse, Trajectory, Turn, UsageStats
+from caw.pricing import compute_cost
+from caw.provider import Provider, ProviderSession
+
+# -- Subprocess registry + atexit cleanup -------------------------------------
+
+_active_processes: set[subprocess.Popen] = set()
+_process_lock = threading.Lock()
+
+
+def _register_process(proc: subprocess.Popen) -> None:
+    with _process_lock:
+        _active_processes.add(proc)
+
+
+def _unregister_process(proc: subprocess.Popen) -> None:
+    with _process_lock:
+        _active_processes.discard(proc)
+
+
+def _cleanup_processes() -> None:
+    """Kill all tracked subprocesses at interpreter exit."""
+    with _process_lock:
+        procs = list(_active_processes)
+    for proc in procs:
+        try:
+            proc.kill()
+        except OSError:
+            pass
+
+
+atexit.register(_cleanup_processes)
+
+
+class CodexSession(ProviderSession):
+    """Live session backed by the ``codex`` CLI."""
+
+    def __init__(
+        self,
+        mcp_servers: list[MCPServer],
+        model: str | None = None,
+        system_prompt: str | None = None,
+        session_id: str | None = None,
+        reasoning: str | None = None,
+    ) -> None:
+        self._session_id = session_id or str(uuid.uuid4())
+        self._model = model
+        self._mcp_servers = mcp_servers
+        self._system_prompt = system_prompt
+        self._reasoning = reasoning
+        self._created_at = datetime.now(timezone.utc).isoformat()
+        self._has_sent = False
+        self._thread_id: str | None = None
+        self._turns: list[Turn] = []
+        self._total_usage = UsageStats()
+        self._total_duration_ms = 0
+        self._last_raw_output: str = ""
+
+    # ------------------------------------------------------------------
+    # MCP config helpers
+    # ------------------------------------------------------------------
+
+    def _mcp_config_args(self) -> list[str]:
+        """Build ``-c`` config override flags for MCP servers."""
+        args: list[str] = []
+        for srv in self._mcp_servers:
+            if srv.url:
+                args += ["-c", f'mcp_servers.{srv.name}.url="{srv.url}"']
+            else:
+                args += ["-c", f'mcp_servers.{srv.name}.command="{srv.command}"']
+                if srv.args:
+                    args += ["-c", f"mcp_servers.{srv.name}.args={json.dumps(srv.args)}"]
+        return args
+
+    # ------------------------------------------------------------------
+    # Core send (streaming Popen)
+    # ------------------------------------------------------------------
+
+    def send(self, message: str) -> Turn:
+        display = get_global_display()
+
+        if display:
+            if not self._has_sent:
+                display.on_metadata(
+                    agent="codex",
+                    model=self._model or "",
+                    session=self._session_id,
+                )
+            display.on_user_message(message)
+
+        # Build the prompt (prepend system prompt on first turn)
+        prompt = message
+        if not self._has_sent and self._system_prompt:
+            prompt = f"{self._system_prompt}\n\n{message}"
+
+        # Build command
+        if not self._has_sent:
+            cmd = [
+                "codex",
+                "exec",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "--json",
+            ]
+        else:
+            cmd = [
+                "codex",
+                "exec",
+                "resume",
+                self._thread_id or "",
+                "--dangerously-bypass-approvals-and-sandbox",
+                "--skip-git-repo-check",
+                "--json",
+            ]
+
+        if self._model:
+            cmd += ["-m", self._model]
+
+        if self._reasoning:
+            cmd += ["-c", f'model_reasoning_effort="{self._reasoning}"']
+
+        cmd += self._mcp_config_args()
+
+        # Prompt as positional arg (last)
+        cmd.append(prompt)
+
+        # Accumulated state for event processing
+        blocks: list[ContentBlock] = []
+        tool_blocks: dict[str, ToolUse] = {}
+        usage = UsageStats()
+        raw_lines: list[str] = []
+
+        try:
+            proc = subprocess.Popen(
+                cmd,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+            )
+        except FileNotFoundError:
+            raise RuntimeError("codex CLI not found. Install it with: npm install -g @openai/codex")
+
+        _register_process(proc)
+        try:
+            # Stream stdout line by line
+            for line in proc.stdout:  # type: ignore[union-attr]
+                line = line.rstrip("\n")
+                raw_lines.append(line)
+                stripped = line.strip()
+                if not stripped:
+                    continue
+                try:
+                    event = json.loads(stripped)
+                except json.JSONDecodeError:
+                    continue
+
+                result = self._process_event(event, blocks, tool_blocks, display)
+                if result is not None:
+                    usage = result
+
+            # Read stderr after stdout is exhausted
+            stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]
+            proc.wait()
+
+            self._last_raw_output = "\n".join(raw_lines)
+
+            if proc.returncode != 0 and not raw_lines:
+                raise RuntimeError(f"codex CLI exited with code {proc.returncode}: {stderr}")
+
+        except (KeyboardInterrupt, Exception):
+            proc.kill()
+            proc.wait()
+            raise
+        finally:
+            _unregister_process(proc)
+
+        self._has_sent = True
+
+        turn = Turn(input=message, output=blocks, usage=usage, duration_ms=0)
+
+        if display:
+            display.on_turn_end(turn.result, usage, 0)
+
+        self._turns.append(turn)
+        self._total_usage = self._total_usage + turn.usage
+        return turn
+
+    # ------------------------------------------------------------------
+    # Per-event processing
+    # ------------------------------------------------------------------
+
+    def _process_event(
+        self,
+        event: dict[str, Any],
+        blocks: list[ContentBlock],
+        tool_blocks: dict[str, ToolUse],
+        display: Display | None,
+    ) -> UsageStats | None:
+        """Process a single JSONL event. Returns UsageStats on ``turn.completed``."""
+        event_type = event.get("type")
+
+        if event_type == "thread.started":
+            self._thread_id = event.get("thread_id")
+
+        elif event_type == "item.started":
+            item = event.get("item", {})
+            item_type = item.get("type")
+            tool_id = item.get("id", str(uuid.uuid4()))
+
+            if item_type == "command_execution":
+                block = ToolUse(
+                    id=tool_id,
+                    name="command_execution",
+                    arguments={"command": item.get("command", "")},
+                )
+                blocks.append(block)
+                tool_blocks[tool_id] = block
+                if display:
+                    display.on_tool_call(block)
+
+            elif item_type == "mcp_tool_call":
+                server = item.get("server", "")
+                tool_name = item.get("tool", "")
+                arguments = item.get("arguments", {})
+                block = ToolUse(
+                    id=tool_id,
+                    name=f"{server}.{tool_name}" if server else tool_name,
+                    arguments=arguments if isinstance(arguments, dict) else {"input": arguments},
+                )
+                blocks.append(block)
+                tool_blocks[tool_id] = block
+                if display:
+                    display.on_tool_call(block)
+
+            elif item_type == "file_change":
+                block = ToolUse(
+                    id=tool_id,
+                    name="file_change",
+                    arguments={"file": item.get("file", ""), "action": item.get("action", "")},
+                )
+                blocks.append(block)
+                tool_blocks[tool_id] = block
+                if display:
+                    display.on_tool_call(block)
+
+        elif event_type in ("item.completed", "item.updated"):
+            item = event.get("item", {})
+            item_type = item.get("type")
+            is_final = event_type == "item.completed"
+
+            if item_type == "command_execution":
+                tool_id = item.get("id", "")
+                if tool_id in tool_blocks:
+                    tool_blocks[tool_id].output = item.get("output", "")
+                    tool_blocks[tool_id].is_error = item.get("exit_code", 0) != 0
+                    if display and is_final:
+                        display.on_tool_result(tool_blocks[tool_id])
+
+            elif item_type == "mcp_tool_call":
+                tool_id = item.get("id", "")
+                if tool_id in tool_blocks:
+                    result = item.get("result")
+                    error = item.get("error")
+                    if result:
+                        # Extract text from MCP content blocks
+                        texts: list[str] = []
+                        for c in result.get("content", []):
+                            if isinstance(c, dict) and c.get("type") == "text":
+                                texts.append(c.get("text", ""))
+                            elif isinstance(c, str):
+                                texts.append(c)
+                        tool_blocks[tool_id].output = "\n".join(texts)
+                    if error:
+                        tool_blocks[tool_id].is_error = True
+                        msg = error.get("message", str(error)) if isinstance(error, dict) else str(error)
+                        tool_blocks[tool_id].output = msg
+                    elif item.get("status") == "failed":
+                        tool_blocks[tool_id].is_error = True
+                    if display and is_final:
+                        display.on_tool_result(tool_blocks[tool_id])
+
+            elif item_type == "file_change":
+                tool_id = item.get("id", "")
+                if tool_id in tool_blocks:
+                    tool_blocks[tool_id].output = item.get("patch", item.get("content", ""))
+                    if display and is_final:
+                        display.on_tool_result(tool_blocks[tool_id])
+
+            elif item_type == "reasoning" and is_final:
+                text = item.get("text", "")
+                if text:
+                    block = ThinkingBlock(text=text)
+                    blocks.append(block)
+                    if display:
+                        display.on_thinking(block)
+
+            elif item_type == "agent_message" and is_final:
+                text = item.get("text", "")
+                if text:
+                    block = TextBlock(text=text)
+                    blocks.append(block)
+                    if display:
+                        display.on_text(block)
+
+        elif event_type == "turn.completed":
+            return self._parse_usage(event)
+
+        elif event_type in ("turn.failed", "error"):
+            error_msg = event.get("message", event.get("error", "Unknown error"))
+            raise RuntimeError(f"Codex turn failed: {error_msg}")
+
+        return None
+
+    # ------------------------------------------------------------------
+    # Usage parsing
+    # ------------------------------------------------------------------
+
+    def _parse_usage(self, event: dict[str, Any]) -> UsageStats:
+        u = event.get("usage", {})
+        usage = UsageStats(
+            input_tokens=u.get("input_tokens", 0),
+            output_tokens=u.get("output_tokens", 0),
+            cache_read_tokens=u.get("cached_input_tokens", 0),
+            cache_write_tokens=0,
+        )
+        usage.cost_usd = compute_cost("codex", self._model or "", usage)
+        return usage
+
+    # ------------------------------------------------------------------
+    # Trajectory / lifecycle
+    # ------------------------------------------------------------------
+
+    @property
+    def session_id(self) -> str:
+        return self._session_id
+
+    @property
+    def last_raw_output(self) -> str:
+        return self._last_raw_output
+
+    @property
+    def trajectory(self) -> Trajectory:
+        return Trajectory(
+            agent="codex",
+            model=self._model or "",
+            session_id=self._session_id,
+            created_at=self._created_at,
+            system_prompt=self._system_prompt or "",
+            reasoning=self._reasoning or "",
+            mcp_servers=list(self._mcp_servers),
+            turns=list(self._turns),
+            usage=self._total_usage,
+            duration_ms=self._total_duration_ms,
+        )
+
+    def end(self) -> Trajectory:
+        return self.trajectory
+
+
+class CodexProvider(Provider):
+    """Provider that delegates to the ``codex`` CLI."""
+
+    @property
+    def name(self) -> str:
+        return "codex"
+
+    def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> CodexSession:
+        return CodexSession(
+            mcp_servers=mcp_servers,
+            model=kwargs.get("model"),
+            system_prompt=kwargs.get("system_prompt"),
+            session_id=kwargs.get("session_id"),
+            reasoning=kwargs.get("reasoning"),
+        )

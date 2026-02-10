@@ -7,7 +7,6 @@ import os
 import re
 import tempfile
 import uuid as uuid_mod
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -15,8 +14,21 @@ from caw.models import AgentSpec, MCPServer, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
 
+# ---------------------------------------------------------------------------
+# Environment variable overrides
+#
+# These let you configure caw globally without changing code.  Each one is
+# used as a fallback when the corresponding value is not set explicitly via
+# the Agent() constructor or method calls.
+#
+#   CAW_PROVIDER  — Provider backend ("claude_code", "codex", …)
+#   CAW_MODEL     — Model name passed to the provider (e.g. "gpt-5.2-codex")
+#   CAW_EFFORT    — Reasoning effort level (e.g. "high", "medium", "low")
+# ---------------------------------------------------------------------------
 DEFAULT_PROVIDER = "claude_code"
-PROVIDER_ENV_VAR = "CAW_PROVIDER"
+CAW_PROVIDER = "CAW_PROVIDER"
+CAW_MODEL = "CAW_MODEL"
+CAW_EFFORT = "CAW_EFFORT"
 
 _PROVIDER_REGISTRY: dict[str, type[Provider]] = {}
 
@@ -31,7 +43,7 @@ def register_provider(name: str, cls: type[Provider]) -> None:
 
 def _resolve_provider(name: str | None) -> Provider:
     """Resolve provider: explicit name > env var > default."""
-    provider_name = name or os.environ.get(PROVIDER_ENV_VAR) or DEFAULT_PROVIDER
+    provider_name = name or os.environ.get(CAW_PROVIDER) or DEFAULT_PROVIDER
     if provider_name not in _PROVIDER_REGISTRY:
         available = list(_PROVIDER_REGISTRY.keys())
         raise ValueError(f"Unknown provider {provider_name!r}. Available: {available}")
@@ -158,8 +170,12 @@ class Agent:
             kwargs["system_prompt"] = system_prompt
         if model is not None:
             kwargs["model"] = model
+        elif os.environ.get(CAW_MODEL):
+            kwargs["model"] = os.environ[CAW_MODEL]
         if reasoning is not None:
             kwargs["reasoning"] = reasoning
+        elif os.environ.get(CAW_EFFORT):
+            kwargs["reasoning"] = os.environ[CAW_EFFORT]
         self._kwargs = kwargs
 
     def set_provider(self, provider: str) -> None:
@@ -280,8 +296,6 @@ class Agent:
         provider_session = self.provider.start_session(mcp_servers=all_mcp, **merged)
 
         if store:
-            provider_session.trajectory.session_id = session_id  # type: ignore[assignment]
-            provider_session.trajectory.created_at = datetime.now(timezone.utc).isoformat()
             store.write_metadata(provider_session.trajectory)
 
         return Session(

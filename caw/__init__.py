@@ -19,6 +19,7 @@ from caw.models import (
 )
 from caw.provider import Provider, ProviderSession
 from caw.providers.claude_code import ClaudeCodeProvider
+from caw.providers.codex import CodexProvider
 from caw.mcp import (
     MCPServerHandle,
     create_mcp_http_server_bundle,
@@ -31,11 +32,13 @@ from caw.toolkit import ToolKit, tool
 
 # Auto-register built-in providers
 register_provider("claude_code", ClaudeCodeProvider)
+register_provider("codex", CodexProvider)
 
 __all__ = [
     "Agent",
     "AgentSpec",
     "ClaudeCodeProvider",
+    "CodexProvider",
     "JsonlWriter",
     "ContentBlock",
     "Display",

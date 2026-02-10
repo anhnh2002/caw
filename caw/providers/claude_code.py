@@ -9,6 +9,7 @@ import subprocess
 import tempfile
 import threading
 import uuid
+from datetime import datetime, timezone
 from typing import Any
 
 from caw.display import Display, get_global_display
@@ -59,6 +60,7 @@ class ClaudeCodeSession(ProviderSession):
         self._model = model
         self._mcp_servers = mcp_servers
         self._system_prompt = system_prompt
+        self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._turns: list[Turn] = []
         self._total_usage = UsageStats()
@@ -333,6 +335,8 @@ class ClaudeCodeSession(ProviderSession):
         return Trajectory(
             agent="claude_code",
             model=self._model or "",
+            session_id=self._session_id,
+            created_at=self._created_at,
             system_prompt=self._system_prompt or "",
             mcp_servers=list(self._mcp_servers),
             turns=list(self._turns),

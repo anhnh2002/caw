@@ -228,6 +228,19 @@ class Agent:
             handles.append(handle)
         return handles
 
+    def completion(self, message: str, **kwargs: Any) -> Trajectory:
+        """Send a single message and return the complete trajectory.
+
+        Convenience wrapper for simple use cases where you don't need
+        to maintain a multi-turn session::
+
+            traj = agent.completion("Explain this code")
+            print(traj.result)
+        """
+        session = self.start_session(**kwargs)
+        session.send(message)
+        return session.end()
+
     def start_session(self, **kwargs: Any) -> Session:
         """Start a new interactive session with the agent."""
         merged = {**self._kwargs, **kwargs}

@@ -19,7 +19,7 @@ classifiers = [
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
 ]
-dependencies = ["rich>=13.0", "mcp>=1.0", "uvicorn>=0.30"]
+dependencies = ["rich>=13.0", "mcp>=1.0", "uvicorn>=0.30", "typer>=0.9"]
 
 [project.optional-dependencies]
 dev = [
@@ -37,7 +37,7 @@ Homepage = "https://github.com/yourname/caw"
 Repository = "https://github.com/yourname/caw"
 
 [project.scripts]
-# caw = "caw.cli:main"
+caw = "caw.cli:main"
 
 [tool.ruff]
 line-length = 120

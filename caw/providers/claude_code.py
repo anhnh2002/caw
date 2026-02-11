@@ -5,11 +5,12 @@ from __future__ import annotations
 import atexit
 import json
 import os
+import re
 import subprocess
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from caw.display import Display, get_global_display
@@ -44,6 +45,70 @@ def _cleanup_processes() -> None:
 
 
 atexit.register(_cleanup_processes)
+
+# -- Usage-limit detection ----------------------------------------------------
+
+_LIMIT_RESET_RE = re.compile(
+    r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+
+_DEFAULT_WAIT_MINUTES = 60
+
+
+def _parse_reset_minutes(text: str) -> int | None:
+    """Parse a Claude Code limit message and return minutes until reset (+ 5 min buffer).
+
+    Expected format: ``"resets 3am (UTC)"`` or ``"resets 3:30pm (US/Eastern)"``.
+    Returns ``None`` if the pattern is not found.
+    """
+    match = _LIMIT_RESET_RE.search(text)
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2) or 0)
+    ampm = match.group(3).lower()
+    tz_label = match.group(4).strip()
+
+    # Convert 12-hour to 24-hour
+    if ampm == "am" and hour == 12:
+        hour = 0
+    elif ampm == "pm" and hour != 12:
+        hour += 12
+
+    if tz_label.upper() == "UTC":
+        tz = timezone.utc
+    else:
+        try:
+            from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+            tz = ZoneInfo(tz_label)
+        except (ImportError, ZoneInfoNotFoundError):
+            return None
+
+    now = datetime.now(tz)
+    reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if reset_time <= now:
+        reset_time += timedelta(days=1)
+
+    delta = reset_time - now
+    wait_minutes = int(delta.total_seconds() / 60) + 5  # 5-minute buffer
+    return max(1, wait_minutes)
+
+
+def detect_usage_limit(text: str) -> int | None:
+    """Check whether *text* indicates a Claude usage limit.
+
+    Returns the number of minutes to wait before retrying, or ``None`` if no
+    limit was detected.  When the reset time cannot be parsed from the message,
+    the caller-supplied default is used (see ``_DEFAULT_WAIT_MINUTES``).
+    """
+    lower = text.lower()
+    if "limit" not in lower or "resets" not in lower:
+        return None
+    return _parse_reset_minutes(text) or _DEFAULT_WAIT_MINUTES
 
 
 class ClaudeCodeSession(ProviderSession):
@@ -201,6 +266,14 @@ class ClaudeCodeSession(ProviderSession):
         self._total_usage = self._total_usage + turn.usage
         self._total_duration_ms += turn.duration_ms
         return turn
+
+    # ------------------------------------------------------------------
+    # Usage-limit detection (called by core Session auto-wait loop)
+    # ------------------------------------------------------------------
+
+    def detect_usage_limit(self, turn: Turn) -> int | None:
+        """Detect Claude Code usage-limit messages in the turn's result text."""
+        return detect_usage_limit(turn.result)
 
     # ------------------------------------------------------------------
     # Per-event processing

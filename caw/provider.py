@@ -27,6 +27,15 @@ class ProviderSession(ABC):
         """The accumulated trajectory so far."""
         ...
 
+    def detect_usage_limit(self, turn: Turn) -> int | None:
+        """Check whether *turn* indicates the provider's usage limit was hit.
+
+        Returns the number of minutes to wait before retrying, or ``None``
+        if no limit was detected.  Override in provider subclasses to
+        implement provider-specific detection logic.
+        """
+        return None
+
     @property
     def session_id(self) -> str | None:
         """Provider-assigned session ID (if any)."""

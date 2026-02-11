@@ -3,16 +3,21 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import tempfile
+import time
 import uuid as uuid_mod
 from pathlib import Path
 from typing import Any
 
+from caw.display import get_global_display
 from caw.models import AgentSpec, MCPServer, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
+
+logger = logging.getLogger(__name__)
 
 # ---------------------------------------------------------------------------
 # Environment variable overrides
@@ -24,13 +29,17 @@ from caw.storage import SessionStore
 #   CAW_PROVIDER  — Provider backend ("claude_code", "codex", …)
 #   CAW_MODEL     — Model name passed to the provider (e.g. "gpt-5.2-codex")
 #   CAW_EFFORT    — Reasoning effort level (e.g. "high", "medium", "low")
+#   CAW_AUTOWAIT  — Auto-wait on usage limit ("1"=on, "0"/"false"=off; default on)
 # ---------------------------------------------------------------------------
 DEFAULT_PROVIDER = "claude_code"
 CAW_PROVIDER = "CAW_PROVIDER"
 CAW_MODEL = "CAW_MODEL"
 CAW_EFFORT = "CAW_EFFORT"
+CAW_AUTOWAIT = "CAW_AUTOWAIT"
 
 _PROVIDER_REGISTRY: dict[str, type[Provider]] = {}
+
+_AUTO_WAIT_RESUME_MESSAGE = "Usage limit reached earlier, now you may continue the work."
 
 # Must match caw.mcp._TRAJ_MARKER_PREFIX / _SUFFIX
 _TRAJ_MARKER_RE = re.compile(r"\n<!-- caw_traj:([\w-]+) -->$")
@@ -87,23 +96,50 @@ class Session:
         store: SessionStore | None = None,
         subagent_traj_dir: str | None = None,
         tool_handles: list[Any] | None = None,
+        auto_wait: bool = True,
     ) -> None:
         self._session = provider_session
         self._store = store
         self._subagent_traj_dir = subagent_traj_dir
         self._tool_handles = tool_handles or []
+        self._auto_wait = auto_wait
 
     def send(self, message: str) -> Turn:
-        """Send a message and get the agent's response turn."""
-        turn = self._session.send(message)
+        """Send a message and get the agent's response turn.
 
-        # Attach subagent trajectories from marker files
-        _attach_subagent_trajectories(turn, self._subagent_traj_dir)
+        When auto-wait is enabled and the provider reports a usage limit,
+        this method sleeps until the limit resets and then automatically
+        resumes the conversation — transparently to the caller.
+        """
+        current_message = message
 
-        if self._store is not None:
-            self._store.append_turn(turn, self._session.trajectory, raw_output=self._session.last_raw_output)
+        while True:
+            turn = self._session.send(current_message)
 
-        return turn
+            # Attach subagent trajectories from marker files
+            _attach_subagent_trajectories(turn, self._subagent_traj_dir)
+
+            if self._store is not None:
+                self._store.append_turn(turn, self._session.trajectory, raw_output=self._session.last_raw_output)
+
+            # Ask the provider whether this turn hit a usage limit
+            if self._auto_wait:
+                wait_minutes = self._session.detect_usage_limit(turn)
+                if wait_minutes is not None:
+                    logger.warning(
+                        "Usage limit reached. Auto-waiting %s min before resuming.",
+                        wait_minutes,
+                    )
+                    display = get_global_display()
+                    if display:
+                        display.on_metadata(
+                            auto_wait=f"sleeping {wait_minutes}min until limit resets",
+                        )
+                    time.sleep(wait_minutes * 60)
+                    current_message = _AUTO_WAIT_RESUME_MESSAGE
+                    continue
+
+            return turn
 
     def end(self) -> Trajectory:
         """End the session and return the complete trajectory."""
@@ -176,6 +212,11 @@ class Agent:
             kwargs["reasoning"] = reasoning
         elif os.environ.get(CAW_EFFORT):
             kwargs["reasoning"] = os.environ[CAW_EFFORT]
+        if "auto_wait" not in kwargs:
+            env_val = os.environ.get(CAW_AUTOWAIT, "").strip().lower()
+            if env_val in ("0", "false", "no", "off"):
+                kwargs["auto_wait"] = False
+            # Otherwise leave unset so provider default (True) applies
         self._kwargs = kwargs
 
     def set_provider(self, provider: str) -> None:
@@ -261,6 +302,9 @@ class Agent:
         """Start a new interactive session with the agent."""
         merged = {**self._kwargs, **kwargs}
 
+        # Pop auto_wait — it's a core Session concern, not a provider kwarg
+        auto_wait = merged.pop("auto_wait", True)
+
         # Generate session_id early so the JSONL path is known before MCP configs
         session_id: str | None = None
         store: SessionStore | None = None
@@ -303,4 +347,5 @@ class Agent:
             store=store,
             subagent_traj_dir=subagent_traj_dir,
             tool_handles=all_handles,
+            auto_wait=auto_wait,
         )

@@ -13,8 +13,7 @@ Usage::
             return ", ".join(self.users)
 
     db = UserDB()
-    agent = Agent(system_prompt="You have a user DB.")
-    agent.add_tool_server(db.as_server())
+    agent = Agent(system_prompt="You have a user DB.", tool_servers=[db])
 """
 
 from __future__ import annotations
@@ -85,7 +84,7 @@ class ToolKit:
     def as_server(self, server_id: str | None = None) -> MCPServerHandle:
         """Build and return an :class:`MCPServerHandle` with all ``@tool`` methods registered."""
         cls = type(self)
-        sid = server_id or f"{cls._server_name or cls.__name__}_{uuid_mod.uuid4().hex[:8]}"
+        sid = server_id or f"{cls._server_name or cls.__name__}_{uuid_mod.uuid4().hex[:6]}"
 
         handle = create_mcp_http_server_bundle(
             sid,

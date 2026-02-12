@@ -27,8 +27,8 @@ def main():
     db = UserDB()
     agent = Agent(
         system_prompt="You have access to a user database. Use the tools to answer questions about users.",
+        tool_servers=[db],
     )
-    agent.add_tool_server(db.as_server())
 
     with agent.start_session() as session:
         session.send("How many users are in the database? List them.")

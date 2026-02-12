@@ -357,7 +357,7 @@ class ClaudeCodeSession(ProviderSession):
                         try:
                             parsed = json.loads(output)
                             if isinstance(parsed, dict) and "result" in parsed:
-                                output = parsed["result"]
+                                output = str(parsed["result"])
                         except (json.JSONDecodeError, TypeError, ValueError):
                             pass
                         is_error = content.get("is_error", False)

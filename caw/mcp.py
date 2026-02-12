@@ -107,7 +107,7 @@ def mcp_tool(
 
 def register_tool(server: FastMCP, func: Callable[..., Any]) -> None:
     """Register a decorated tool function with a FastMCP server."""
-    info = getattr(func, "_mcp_tool_info", {})
+    info = getattr(func, "_mcp_tool_info", None) or getattr(func, "_toolkit_tool_info", {})
     server.tool(
         name=info.get("name"),
         title=info.get("title"),
@@ -341,7 +341,7 @@ class MCPServerHandle:
 
     def _ensure_path(self) -> str:
         if self.path is None:
-            self.path = f"/mcp/{self.server_id}/{uuid_mod.uuid4().hex[:8]}"
+            self.path = f"/mcp/{self.server_id}/{uuid_mod.uuid4().hex[:6]}"
             self.server.settings.streamable_http_path = self.path
         return self.path
 
@@ -400,7 +400,7 @@ def create_mcp_http_server_bundle(
 
         lifespan = managed_lifespan
 
-    streamable_path = f"/mcp/{server_id}/{uuid_mod.uuid4().hex[:8]}"
+    streamable_path = f"/mcp/{server_id}/{uuid_mod.uuid4().hex[:6]}"
 
     bound_socket = _create_bound_socket("127.0.0.1")
     port = bound_socket.getsockname()[1]
@@ -423,6 +423,25 @@ def create_mcp_http_server_bundle(
         uvicorn_log_level=uvicorn_log_level,
         _bound_socket=bound_socket,
     )
+
+
+def create_stateless_tool_server(
+    funcs: list[Callable[..., Any]],
+    *,
+    server_id: str | None = None,
+    display_name: str = "stateless_tools",
+) -> MCPServerHandle:
+    """Bundle plain functions into a single :class:`MCPServerHandle`.
+
+    Each function is registered as an MCP tool.  Functions may optionally be
+    decorated with :func:`mcp_tool` or :func:`~caw.toolkit.tool` to supply
+    metadata; bare functions are registered using their name and docstring.
+    """
+    sid = server_id or f"general_{uuid_mod.uuid4().hex[:6]}"
+    handle = create_mcp_http_server_bundle(sid, display_name=display_name)
+    for func in funcs:
+        register_tool(handle.server, func)
+    return handle
 
 
 # -- Name sanitization ---------------------------------------------------------

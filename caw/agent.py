@@ -16,6 +16,8 @@ from caw.display import get_global_display
 from caw.models import AgentSpec, MCPServer, ToolGroup, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
+from caw.toolkit import ToolKit
+from caw.mcp import create_stateless_tool_server
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +192,8 @@ class Agent:
         model: str | None = None,
         reasoning: str | None = None,
         tools: ToolGroup | None = None,
+        tool_servers: list[Any] | None = None,
+        stateless_tools: list[Any] | None = None,
         name: str = "",
         description: str = "",
         **kwargs: Any,
@@ -199,6 +203,11 @@ class Agent:
         self._mcp_servers: list[MCPServer] = []
         self._subagents: list[AgentSpec] = []
         self._tool_servers: list[Any] = []  # list[MCPServerHandle], lazy import
+        if tool_servers:
+            for ts in tool_servers:
+                self.add_tool_server(ts)
+        if stateless_tools:
+            self._tool_servers.append(create_stateless_tool_server(stateless_tools))
         self._data_dir = data_dir
         self._name = name
         self._description = description
@@ -244,10 +253,14 @@ class Agent:
         self._mcp_servers.append(server)
 
     def add_tool_server(self, handle: Any) -> None:
-        """Register a custom HTTP tool server (MCPServerHandle).
+        """Register a custom HTTP tool server (MCPServerHandle or ToolKit).
 
-        The handle's lifecycle (start/stop) is managed by the session.
+        If *handle* is a :class:`~caw.toolkit.ToolKit` instance, ``as_server()``
+        is called automatically.  The handle's lifecycle (start/stop) is managed
+        by the session.
         """
+        if isinstance(handle, ToolKit):
+            handle = handle.as_server()
         self._tool_servers.append(handle)
 
     def set_model(self, model: str) -> None:

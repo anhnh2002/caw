@@ -24,6 +24,7 @@ from caw.providers.codex import CodexProvider
 from caw.mcp import (
     MCPServerHandle,
     create_mcp_http_server_bundle,
+    create_stateless_tool_server,
     create_subagent_tool_server,
     get_state_from_context,
     mcp_tool,
@@ -61,6 +62,7 @@ __all__ = [
     "Turn",
     "UsageStats",
     "create_mcp_http_server_bundle",
+    "create_stateless_tool_server",
     "create_subagent_tool_server",
     "get_state_from_context",
     "mcp_tool",

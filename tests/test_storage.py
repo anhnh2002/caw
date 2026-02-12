@@ -27,14 +27,14 @@ def test_single_turn_persists(tmp_path):
     assert session_dir is not None
     assert session_dir.exists()
 
-    # config.json
-    config = json.loads((session_dir / "config.json").read_text())
-    assert config["agent"] == "claude_code"
-    assert config["model"]  # backfilled from provider
-    assert config["num_turns"] == 1
-    assert config["total_duration_ms"] > 0
-    assert config["total_usage"]["input_tokens"] > 0
-    assert config["total_usage"]["output_tokens"] > 0
+    # trajectory.json
+    traj = json.loads((session_dir / "trajectory.json").read_text())
+    assert traj["agent"] == "claude_code"
+    assert traj["model"]  # backfilled from provider
+    assert len(traj["turns"]) == 1
+    assert traj["duration_ms"] > 0
+    assert traj["total_usage"]["input_tokens"] > 0
+    assert traj["total_usage"]["output_tokens"] > 0
 
     # Turn files
     turns_dir = session_dir / "turns"
@@ -60,8 +60,8 @@ def test_multi_turn_persists(tmp_path):
 
     assert session_dir is not None
 
-    config = json.loads((session_dir / "config.json").read_text())
-    assert config["num_turns"] == 2
+    traj = json.loads((session_dir / "trajectory.json").read_text())
+    assert len(traj["turns"]) == 2
 
     turns_dir = session_dir / "turns"
     assert (turns_dir / "000_input.txt").read_text() == "Say hello"

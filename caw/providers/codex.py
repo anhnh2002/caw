@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import atexit
 import json
+import logging
 import subprocess
 import threading
 import uuid
@@ -11,9 +12,21 @@ from datetime import datetime, timezone
 from typing import Any
 
 from caw.display import Display, get_global_display
-from caw.models import ContentBlock, MCPServer, TextBlock, ThinkingBlock, ToolUse, Trajectory, Turn, UsageStats
+from caw.models import (
+    ContentBlock,
+    MCPServer,
+    TextBlock,
+    ThinkingBlock,
+    ToolGroup,
+    ToolUse,
+    Trajectory,
+    Turn,
+    UsageStats,
+)
 from caw.pricing import compute_cost
 from caw.provider import Provider, ProviderSession
+
+logger = logging.getLogger(__name__)
 
 # -- Subprocess registry + atexit cleanup -------------------------------------
 
@@ -55,12 +68,16 @@ class CodexSession(ProviderSession):
         system_prompt: str | None = None,
         session_id: str | None = None,
         reasoning: str | None = None,
+        sandbox: str | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._session_id = session_id or str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
         self._system_prompt = system_prompt
         self._reasoning = reasoning
+        self._sandbox = sandbox
+        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
         self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._thread_id: str | None = None
@@ -106,25 +123,31 @@ class CodexSession(ProviderSession):
         if not self._has_sent and self._system_prompt:
             prompt = f"{self._system_prompt}\n\n{message}"
 
+        # Build sandbox flags
+        if self._sandbox is None or self._sandbox == "danger-full-access":
+            sandbox_flags = ["--dangerously-bypass-approvals-and-sandbox"]
+        else:
+            sandbox_flags = ["--full-auto", "--sandbox", self._sandbox]
+
         # Build command
         if not self._has_sent:
-            cmd = [
-                "codex",
-                "exec",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--skip-git-repo-check",
-                "--json",
-            ]
+            cmd = (
+                ["codex", "exec"]
+                + sandbox_flags
+                + [
+                    "--skip-git-repo-check",
+                    "--json",
+                ]
+            )
         else:
-            cmd = [
-                "codex",
-                "exec",
-                "resume",
-                self._thread_id or "",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "--skip-git-repo-check",
-                "--json",
-            ]
+            cmd = (
+                ["codex", "exec", "resume", self._thread_id or ""]
+                + sandbox_flags
+                + [
+                    "--skip-git-repo-check",
+                    "--json",
+                ]
+            )
 
         if self._model:
             cmd += ["-m", self._model]
@@ -365,6 +388,7 @@ class CodexSession(ProviderSession):
             turns=list(self._turns),
             usage=self._total_usage,
             duration_ms=self._total_duration_ms,
+            metadata=dict(self._metadata),
         )
 
     def end(self) -> Trajectory:
@@ -378,6 +402,40 @@ class CodexProvider(Provider):
     def name(self) -> str:
         return "codex"
 
+    def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
+        if tools == ToolGroup.ALL:
+            return {}
+        if not tools:
+            raise ValueError("ToolGroup must not be empty — at least one group is required.")
+
+        has_exec = bool(tools & ToolGroup.EXEC)
+        has_writer = bool(tools & ToolGroup.WRITER)
+        has_reader = bool(tools & ToolGroup.READER)
+
+        # Warn about groups that Codex cannot distinguish
+        lost = []
+        for group_name in ("PARALLEL", "WEB", "INTERACTION"):
+            group = ToolGroup[group_name]
+            if bool(tools & group) != bool(ToolGroup.ALL & group):
+                lost.append(group_name)
+        if lost:
+            logger.warning(
+                "Codex provider cannot enforce per-tool restrictions for %s; "
+                "these distinctions are lost in sandbox-level mapping.",
+                ", ".join(lost),
+            )
+
+        if has_exec:
+            return {"sandbox": "danger-full-access"}
+        if has_writer:
+            return {"sandbox": "workspace-write"}
+        if has_reader:
+            return {"sandbox": "read-only"}
+
+        # Fallback: some groups set but none of READER/WRITER/EXEC
+        logger.warning("Codex: no file/exec groups enabled; defaulting to read-only sandbox.")
+        return {"sandbox": "read-only"}
+
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> CodexSession:
         return CodexSession(
             mcp_servers=mcp_servers,
@@ -385,4 +443,6 @@ class CodexProvider(Provider):
             system_prompt=kwargs.get("system_prompt"),
             session_id=kwargs.get("session_id"),
             reasoning=kwargs.get("reasoning"),
+            sandbox=kwargs.get("sandbox"),
+            metadata=kwargs.get("metadata"),
         )

@@ -14,8 +14,29 @@ from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from caw.display import Display, get_global_display
-from caw.models import ContentBlock, MCPServer, TextBlock, ThinkingBlock, ToolUse, Trajectory, Turn, UsageStats
+from caw.models import (
+    ContentBlock,
+    MCPServer,
+    TextBlock,
+    ThinkingBlock,
+    ToolGroup,
+    ToolUse,
+    Trajectory,
+    Turn,
+    UsageStats,
+)
 from caw.provider import Provider, ProviderSession
+
+# -- Tool group → Claude Code tool name mapping --------------------------------
+
+_TOOL_GROUP_MAP: dict[ToolGroup, list[str]] = {
+    ToolGroup.READER: ["Read", "Glob", "Grep"],
+    ToolGroup.WRITER: ["Write", "Edit", "NotebookEdit"],
+    ToolGroup.EXEC: ["Bash"],
+    ToolGroup.WEB: ["WebFetch", "WebSearch"],
+    ToolGroup.PARALLEL: ["Task", "TaskOutput", "TaskStop"],
+    ToolGroup.INTERACTION: ["AskUserQuestion"],
+}
 
 # -- Subprocess registry + atexit cleanup -------------------------------------
 
@@ -120,11 +141,15 @@ class ClaudeCodeSession(ProviderSession):
         model: str | None = None,
         system_prompt: str | None = None,
         session_id: str | None = None,
+        disallowed_tools: list[str] | None = None,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._session_id = session_id or str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
         self._system_prompt = system_prompt
+        self._disallowed_tools = disallowed_tools
+        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
         self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._turns: list[Turn] = []
@@ -184,6 +209,9 @@ class ClaudeCodeSession(ProviderSession):
             "stream-json",
             "--dangerously-skip-permissions",
         ]
+
+        if self._disallowed_tools:
+            cmd += ["--disallowedTools", ",".join(self._disallowed_tools)]
 
         if self._model:
             cmd += ["--model", self._model]
@@ -415,6 +443,7 @@ class ClaudeCodeSession(ProviderSession):
             turns=list(self._turns),
             usage=self._total_usage,
             duration_ms=self._total_duration_ms,
+            metadata=dict(self._metadata),
         )
 
     def end(self) -> Trajectory:
@@ -432,13 +461,30 @@ class ClaudeCodeProvider(Provider):
     def name(self) -> str:
         return "claude_code"
 
+    def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
+        if tools == ToolGroup.ALL:
+            return {}
+        if not tools:
+            raise ValueError("ToolGroup must not be empty — at least one group is required.")
+        disallowed: list[str] = []
+        for group, names in _TOOL_GROUP_MAP.items():
+            if not (tools & group):
+                disallowed.extend(names)
+        if not disallowed:
+            return {}
+        return {"disallowed_tools": disallowed}
+
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ClaudeCodeSession:
         model = kwargs.get("model")
         system_prompt = kwargs.get("system_prompt")
         session_id = kwargs.get("session_id")
+        disallowed_tools = kwargs.get("disallowed_tools")
+        metadata = kwargs.get("metadata")
         return ClaudeCodeSession(
             mcp_servers=mcp_servers,
             model=model,
             system_prompt=system_prompt,
             session_id=session_id,
+            disallowed_tools=disallowed_tools,
+            metadata=metadata,
         )

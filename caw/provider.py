@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from caw.models import MCPServer, Trajectory, Turn
+from caw.models import MCPServer, ToolGroup, Trajectory, Turn
 
 
 class ProviderSession(ABC):
@@ -55,6 +55,14 @@ class Provider(ABC):
     def name(self) -> str:
         """Provider identifier (e.g. 'claude_code', 'codex')."""
         ...
+
+    def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
+        """Translate ToolGroup into provider-specific session kwargs.
+
+        Receives a concrete ToolGroup value (never None — the Agent layer
+        applies the default before calling this).
+        """
+        return {}
 
     @abstractmethod
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ProviderSession:

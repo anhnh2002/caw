@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 from caw.display import get_global_display
-from caw.models import AgentSpec, MCPServer, ToolUse, Trajectory, Turn
+from caw.models import AgentSpec, MCPServer, ToolGroup, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
 
@@ -189,6 +189,7 @@ class Agent:
         system_prompt: str | None = None,
         model: str | None = None,
         reasoning: str | None = None,
+        tools: ToolGroup | None = None,
         name: str = "",
         description: str = "",
         **kwargs: Any,
@@ -202,6 +203,8 @@ class Agent:
         self._name = name
         self._description = description
         self._metadata: dict[str, Any] = {}
+        if tools is not None:
+            kwargs["tools"] = tools
         if system_prompt is not None:
             kwargs["system_prompt"] = system_prompt
         if model is not None:
@@ -259,6 +262,10 @@ class Agent:
         """Set a system prompt that guides the agent's behavior for the session."""
         self._kwargs["system_prompt"] = system_prompt
 
+    def set_tools(self, tools: ToolGroup) -> None:
+        """Set the tool permission groups for sessions."""
+        self._kwargs["tools"] = tools
+
     def add_subagent(self, spec: AgentSpec) -> None:
         """Register a subagent that will be exposed as a tool."""
         self._subagents.append(spec)
@@ -271,6 +278,7 @@ class Agent:
             system_prompt=self._kwargs.get("system_prompt", ""),
             model=self._kwargs.get("model", ""),
             reasoning=self._kwargs.get("reasoning", ""),
+            tools=self._kwargs.get("tools"),
             mcp_servers=list(self._mcp_servers),
             metadata=dict(self._metadata),
         )
@@ -304,6 +312,13 @@ class Agent:
 
         # Pop auto_wait — it's a core Session concern, not a provider kwarg
         auto_wait = merged.pop("auto_wait", True)
+
+        # Resolve tool restrictions: default to ALL - INTERACTION for automated pipelines
+        tools = merged.pop("tools", None)
+        if tools is None:
+            tools = ToolGroup.ALL - ToolGroup.INTERACTION
+        restrictions = self.provider.resolve_tool_restrictions(tools)
+        merged.update(restrictions)
 
         # Generate session_id early so the JSONL path is known before MCP configs
         session_id: str | None = None

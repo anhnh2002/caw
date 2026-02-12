@@ -2,8 +2,34 @@
 
 from __future__ import annotations
 
+import enum
 from dataclasses import dataclass, field
 from typing import Any, Union
+
+
+class ToolGroup(enum.Flag):
+    """Abstract tool permission groups.
+
+    Combine with ``|`` (union) and ``-`` (subtract) to build permission sets::
+
+        ToolGroup.READER | ToolGroup.EXEC          # read + execute only
+        ToolGroup.ALL - ToolGroup.WRITER            # everything except writes
+        ToolGroup.ALL - ToolGroup.INTERACTION       # default for automated pipelines
+    """
+
+    READER = enum.auto()
+    WRITER = enum.auto()
+    EXEC = enum.auto()
+    WEB = enum.auto()
+    PARALLEL = enum.auto()
+    INTERACTION = enum.auto()
+
+    ALL = READER | WRITER | EXEC | WEB | PARALLEL | INTERACTION
+
+    def __sub__(self, other):
+        if not isinstance(other, ToolGroup):
+            return NotImplemented
+        return self & ~other
 
 
 @dataclass
@@ -30,6 +56,7 @@ class AgentSpec:
     system_prompt: str = ""
     model: str = ""
     reasoning: str = ""
+    tools: ToolGroup | None = None
     mcp_servers: list[MCPServer] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
@@ -211,6 +238,19 @@ class Trajectory:
                 if isinstance(block, ToolUse) and block.subagent_trajectory:
                     trajs.append(block.subagent_trajectory)
         return trajs
+
+    @property
+    def is_usage_limited(self) -> bool:
+        """Whether the session ended due to a usage limit."""
+        if not self.turns:
+            return False
+        text = self.turns[-1].result.lower()
+        return "limit" in text and "resets" in text
+
+    @property
+    def is_complete(self) -> bool:
+        """Whether the session completed normally (has turns and wasn't usage-limited)."""
+        return len(self.turns) > 0 and not self.is_usage_limited
 
     def to_dict(self) -> dict[str, Any]:
         return {

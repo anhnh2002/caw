@@ -95,14 +95,14 @@ def test_set_reasoning():
 # ===========================================================================
 
 
-def test_multi_turn_conversation():
+def test_multi_turn_conversation(tmp_path):
     """Multi-turn session where the user and agent go back and forth."""
     agent = Agent()
 
     with agent.start_session() as session:
-        session.send("Create a file called hello.py with print('hello')")
-        session.send("Now rename it to greet.py")
-        session.send("Read greet.py and tell me what's in it")
+        session.send(f"Create a file called {tmp_path}/hello.py with print('hello')")
+        session.send(f"Now rename it to {tmp_path}/greet.py")
+        session.send(f"Read {tmp_path}/greet.py and tell me what's in it")
 
     traj = session.trajectory
     assert traj.num_turns == 3
@@ -162,13 +162,13 @@ def test_mcp_server_configuration():
 # ===========================================================================
 
 
-def test_trajectory_inspection():
+def test_trajectory_inspection(tmp_path):
     """After a session, inspect the full trajectory for logging / analysis."""
     agent = Agent()
 
     with agent.start_session() as session:
-        session.send("Create a file called test.txt with content 'hello'")
-        session.send("Read test.txt")
+        session.send(f"Create a file called {tmp_path}/test.txt with content 'hello'")
+        session.send(f"Read {tmp_path}/test.txt")
 
     traj = session.trajectory
     assert traj.num_turns == 2

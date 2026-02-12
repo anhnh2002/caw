@@ -448,6 +448,7 @@ class SubagentState:
     model: str
     traj_dir: str
     jsonl_path: str
+    tools: Any = None
 
 
 def _run_subagent_blocking(
@@ -457,6 +458,7 @@ def _run_subagent_blocking(
     traj_dir: str,
     jsonl_path: str,
     subagent_name: str,
+    tools: Any = None,
 ) -> str:
     """Run a single-turn subagent synchronously (called from a thread).
 
@@ -467,6 +469,7 @@ def _run_subagent_blocking(
     agent = Agent(
         system_prompt=system_prompt,
         model=model or None,
+        tools=tools,
         data_dir=None,
     )
 
@@ -532,6 +535,7 @@ def create_subagent_tool_server(
         model=spec.model or "",
         traj_dir=traj_dir,
         jsonl_path=jsonl_path or "",
+        tools=getattr(spec, "tools", None),
     )
 
     handle = create_mcp_http_server_bundle(
@@ -551,6 +555,7 @@ def create_subagent_tool_server(
             s.traj_dir,
             s.jsonl_path,
             s.name,
+            s.tools,
         )
 
     register_tool(handle.server, subagent_tool)

@@ -449,6 +449,8 @@ class SubagentState:
     traj_dir: str
     jsonl_path: str
     tools: Any = None
+    mcp_servers: list = field(default_factory=list)
+    subagents: list = field(default_factory=list)
 
 
 def _run_subagent_blocking(
@@ -459,6 +461,8 @@ def _run_subagent_blocking(
     jsonl_path: str,
     subagent_name: str,
     tools: Any = None,
+    mcp_servers: list | None = None,
+    subagents: list | None = None,
 ) -> str:
     """Run a single-turn subagent synchronously (called from a thread).
 
@@ -472,6 +476,12 @@ def _run_subagent_blocking(
         tools=tools,
         data_dir=None,
     )
+
+    for srv in mcp_servers or []:
+        agent.add_mcp_server(srv)
+
+    for sub in subagents or []:
+        agent.add_subagent(sub)
 
     try:
         with agent.start_session() as session:
@@ -536,6 +546,8 @@ def create_subagent_tool_server(
         traj_dir=traj_dir,
         jsonl_path=jsonl_path or "",
         tools=getattr(spec, "tools", None),
+        mcp_servers=list(getattr(spec, "mcp_servers", None) or []),
+        subagents=list(getattr(spec, "subagents", None) or []),
     )
 
     handle = create_mcp_http_server_bundle(
@@ -556,6 +568,8 @@ def create_subagent_tool_server(
             s.jsonl_path,
             s.name,
             s.tools,
+            s.mcp_servers,
+            s.subagents,
         )
 
     register_tool(handle.server, subagent_tool)

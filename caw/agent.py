@@ -280,6 +280,7 @@ class Agent:
             reasoning=self._kwargs.get("reasoning", ""),
             tools=self._kwargs.get("tools"),
             mcp_servers=list(self._mcp_servers),
+            subagents=list(self._subagents),
             metadata=dict(self._metadata),
         )
 

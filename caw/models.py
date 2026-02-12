@@ -58,6 +58,7 @@ class AgentSpec:
     reasoning: str = ""
     tools: ToolGroup | None = None
     mcp_servers: list[MCPServer] = field(default_factory=list)
+    subagents: list["AgentSpec"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
 
 

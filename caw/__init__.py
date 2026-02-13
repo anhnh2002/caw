@@ -31,6 +31,7 @@ from caw.mcp import (
     register_tool,
 )
 from caw.toolkit import ToolKit, tool
+from caw.viewer import ViewerServer, start_viewer_server
 
 # Auto-register built-in providers
 register_provider("claude_code", ClaudeCodeProvider)
@@ -68,6 +69,8 @@ __all__ = [
     "mcp_tool",
     "register_provider",
     "register_tool",
+    "start_viewer_server",
     "tool",
     "ToolKit",
+    "ViewerServer",
 ]

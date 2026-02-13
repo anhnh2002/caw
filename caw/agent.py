@@ -105,6 +105,7 @@ class Session:
         self._subagent_traj_dir = subagent_traj_dir
         self._tool_handles = tool_handles or []
         self._auto_wait = auto_wait
+        self._readonly = False
 
     def send(self, message: str) -> Turn:
         """Send a message and get the agent's response turn.
@@ -113,6 +114,8 @@ class Session:
         this method sleeps until the limit resets and then automatically
         resumes the conversation — transparently to the caller.
         """
+        if self._readonly:
+            raise RuntimeError("Cannot send messages on a loaded session")
         current_message = message
 
         while True:
@@ -145,6 +148,8 @@ class Session:
 
     def end(self) -> Trajectory:
         """End the session and return the complete trajectory."""
+        if self._readonly:
+            raise RuntimeError("Cannot send messages on a loaded session")
         traj = self._session.end()
         if self._store is not None:
             self._store.finalize(traj)
@@ -159,7 +164,36 @@ class Session:
     @property
     def trajectory(self) -> Trajectory:
         """Accumulated trajectory (available during and after the session)."""
+        if self._readonly:
+            return self._loaded_trajectory
         return self._session.trajectory
+
+    def save_trajectory(self, path: str | Path) -> None:
+        """Save the trajectory to a JSON file at the given path."""
+        p = Path(path)
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with open(p, "w") as f:
+            json.dump(self.trajectory.to_dict(), f, indent=2)
+
+    @classmethod
+    def load_trajectory(cls, path: str | Path) -> Session:
+        """Load a trajectory from a JSON file. The returned session is read-only."""
+        with open(path) as f:
+            data = json.load(f)
+        traj = Trajectory.from_dict(data)
+        return cls._from_trajectory(traj)
+
+    @classmethod
+    def _from_trajectory(cls, traj: Trajectory) -> Session:
+        session = object.__new__(cls)
+        session._session = None
+        session._store = None
+        session._subagent_traj_dir = None
+        session._tool_handles = []
+        session._auto_wait = False
+        session._readonly = True
+        session._loaded_trajectory = traj
+        return session
 
     @property
     def session_dir(self) -> Path | None:

@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 import re
 import tempfile
+import threading
 import time
 import uuid as uuid_mod
 from pathlib import Path
@@ -106,6 +108,31 @@ class Session:
         self._tool_handles = tool_handles or []
         self._auto_wait = auto_wait
         self._readonly = False
+        self._send_lock = threading.Lock()
+        self._async_send_lock: asyncio.Lock | None = None
+
+    async def send_async(self, message: str) -> Turn:
+        """Async version of :meth:`send` — runs in a thread.
+
+        Messages are processed in FIFO order: if multiple ``send_async``
+        calls overlap, each waits for the previous one to finish before
+        starting.  This lets you fire-and-forget multiple messages::
+
+            tasks = [asyncio.create_task(session.send_async(m)) for m in msgs]
+            turns = await asyncio.gather(*tasks)  # executed in order
+
+        You can also do async work while a send is in progress::
+
+            task = asyncio.create_task(session.send_async(prompt))
+            while not task.done():
+                source = await asyncio.wait_for(queue.get(), timeout=0.5)
+                yield source
+            turn = await task
+        """
+        if self._async_send_lock is None:
+            self._async_send_lock = asyncio.Lock()
+        async with self._async_send_lock:
+            return await asyncio.to_thread(self.send, message)
 
     def send(self, message: str) -> Turn:
         """Send a message and get the agent's response turn.
@@ -116,35 +143,36 @@ class Session:
         """
         if self._readonly:
             raise RuntimeError("Cannot send messages on a loaded session")
-        current_message = message
+        with self._send_lock:
+            current_message = message
 
-        while True:
-            turn = self._session.send(current_message)
+            while True:
+                turn = self._session.send(current_message)
 
-            # Attach subagent trajectories from marker files
-            _attach_subagent_trajectories(turn, self._subagent_traj_dir)
+                # Attach subagent trajectories from marker files
+                _attach_subagent_trajectories(turn, self._subagent_traj_dir)
 
-            if self._store is not None:
-                self._store.append_turn(turn, self._session.trajectory, raw_output=self._session.last_raw_output)
+                if self._store is not None:
+                    self._store.append_turn(turn, self._session.trajectory, raw_output=self._session.last_raw_output)
 
-            # Ask the provider whether this turn hit a usage limit
-            if self._auto_wait:
-                wait_minutes = self._session.detect_usage_limit(turn)
-                if wait_minutes is not None:
-                    logger.warning(
-                        "Usage limit reached. Auto-waiting %s min before resuming.",
-                        wait_minutes,
-                    )
-                    display = get_global_display()
-                    if display:
-                        display.on_metadata(
-                            auto_wait=f"sleeping {wait_minutes}min until limit resets",
+                # Ask the provider whether this turn hit a usage limit
+                if self._auto_wait:
+                    wait_minutes = self._session.detect_usage_limit(turn)
+                    if wait_minutes is not None:
+                        logger.warning(
+                            "Usage limit reached. Auto-waiting %s min before resuming.",
+                            wait_minutes,
                         )
-                    time.sleep(wait_minutes * 60)
-                    current_message = _AUTO_WAIT_RESUME_MESSAGE
-                    continue
+                        display = get_global_display()
+                        if display:
+                            display.on_metadata(
+                                auto_wait=f"sleeping {wait_minutes}min until limit resets",
+                            )
+                        time.sleep(wait_minutes * 60)
+                        current_message = _AUTO_WAIT_RESUME_MESSAGE
+                        continue
 
-            return turn
+                return turn
 
     def end(self) -> Trajectory:
         """End the session and return the complete trajectory."""
@@ -192,6 +220,8 @@ class Session:
         session._tool_handles = []
         session._auto_wait = False
         session._readonly = True
+        session._send_lock = threading.Lock()
+        session._async_send_lock = None
         session._loaded_trajectory = traj
         return session
 

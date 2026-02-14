@@ -132,7 +132,7 @@ class ClaudeAuthProvider(AgentAuthProvider):
                 host_original=".claude/.credentials.json",
                 type="credential",
                 strategy="symlink",
-                mode="0666",
+                mode="0600",
             ),
             content=json.dumps(credentials).encode(),
         )
@@ -230,7 +230,7 @@ class CodexAuthProvider(AgentAuthProvider):
                     host_original=".codex/auth.json",
                     type="credential",
                     strategy="symlink",
-                    mode="0666",
+                    mode="0600",
                 ),
                 content=auth_content,
             )
@@ -305,7 +305,7 @@ class GeminiAuthProvider(AgentAuthProvider):
                             host_original=f".gemini/{filename}",
                             type="credential",
                             strategy="symlink",
-                            mode="0666",
+                            mode="0600",
                         ),
                         content=path.read_bytes(),
                     )
@@ -385,7 +385,7 @@ class CursorAuthProvider(AgentAuthProvider):
                         host_original=".config/cursor/auth.json",
                         type="credential",
                         strategy="symlink",
-                        mode="0666",
+                        mode="0600",
                     ),
                     content=auth_path.read_bytes(),
                 )

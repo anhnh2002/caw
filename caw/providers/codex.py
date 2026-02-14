@@ -69,7 +69,6 @@ class CodexSession(ProviderSession):
         session_id: str | None = None,
         reasoning: str | None = None,
         sandbox: str | None = None,
-        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._session_id = session_id or str(uuid.uuid4())
         self._model = model
@@ -77,7 +76,6 @@ class CodexSession(ProviderSession):
         self._system_prompt = system_prompt
         self._reasoning = reasoning
         self._sandbox = sandbox
-        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
         self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._thread_id: str | None = None
@@ -388,7 +386,7 @@ class CodexSession(ProviderSession):
             turns=list(self._turns),
             usage=self._total_usage,
             duration_ms=self._total_duration_ms,
-            metadata=dict(self._metadata),
+            metadata={},
         )
 
     def end(self) -> Trajectory:
@@ -444,5 +442,4 @@ class CodexProvider(Provider):
             session_id=kwargs.get("session_id"),
             reasoning=kwargs.get("reasoning"),
             sandbox=kwargs.get("sandbox"),
-            metadata=kwargs.get("metadata"),
         )

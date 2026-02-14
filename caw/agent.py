@@ -101,12 +101,14 @@ class Session:
         subagent_traj_dir: str | None = None,
         tool_handles: list[Any] | None = None,
         auto_wait: bool = True,
+        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._session = provider_session
         self._store = store
         self._subagent_traj_dir = subagent_traj_dir
         self._tool_handles = tool_handles or []
         self._auto_wait = auto_wait
+        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
         self._readonly = False
         self._send_lock = threading.Lock()
         self._async_send_lock: asyncio.Lock | None = None
@@ -153,7 +155,7 @@ class Session:
                 _attach_subagent_trajectories(turn, self._subagent_traj_dir)
 
                 if self._store is not None:
-                    self._store.append_turn(turn, self._session.trajectory, raw_output=self._session.last_raw_output)
+                    self._store.append_turn(turn, self.trajectory, raw_output=self._session.last_raw_output)
 
                 # Ask the provider whether this turn hit a usage limit
                 if self._auto_wait:
@@ -178,7 +180,8 @@ class Session:
         """End the session and return the complete trajectory."""
         if self._readonly:
             raise RuntimeError("Cannot send messages on a loaded session")
-        traj = self._session.end()
+        self._session.end()
+        traj = self.trajectory
         if self._store is not None:
             self._store.finalize(traj)
         # Stop all tool server handles
@@ -194,7 +197,11 @@ class Session:
         """Accumulated trajectory (available during and after the session)."""
         if self._readonly:
             return self._loaded_trajectory
-        return self._session.trajectory
+        traj = self._session.trajectory
+        if self._metadata:
+            # Session metadata merges on top of provider metadata
+            traj.metadata = {**traj.metadata, **self._metadata}
+        return traj
 
     def save_trajectory(self, path: str | Path) -> None:
         """Save the trajectory to a JSON file at the given path."""
@@ -219,6 +226,7 @@ class Session:
         session._subagent_traj_dir = None
         session._tool_handles = []
         session._auto_wait = False
+        session._metadata = {}
         session._readonly = True
         session._send_lock = threading.Lock()
         session._async_send_lock = None
@@ -312,6 +320,11 @@ class Agent:
         """Currently configured MCP servers."""
         return list(self._mcp_servers)
 
+    @property
+    def metadata(self) -> dict[str, Any]:
+        """Mutable metadata dict carried onto every session's trajectory."""
+        return self._metadata
+
     def add_mcp_server(self, server: MCPServer) -> None:
         """Register an MCP server for tool access."""
         self._mcp_servers.append(server)
@@ -388,8 +401,12 @@ class Agent:
         """Start a new interactive session with the agent."""
         merged = {**self._kwargs, **kwargs}
 
-        # Pop auto_wait — it's a core Session concern, not a provider kwarg
+        # Pop auto_wait and metadata — these are Session concerns, not provider kwargs
         auto_wait = merged.pop("auto_wait", True)
+        session_metadata: dict[str, Any] = merged.pop("metadata", {})
+        # Agent-level metadata as base, session kwargs override
+        if self._metadata:
+            session_metadata = {**self._metadata, **session_metadata}
 
         # Resolve tool restrictions: default to ALL - INTERACTION for automated pipelines
         tools = merged.pop("tools", None)
@@ -432,13 +449,16 @@ class Agent:
 
         provider_session = self.provider.start_session(mcp_servers=all_mcp, **merged)
 
-        if store:
-            store.write_metadata(provider_session.trajectory)
-
-        return Session(
+        session = Session(
             provider_session,
             store=store,
             subagent_traj_dir=subagent_traj_dir,
             tool_handles=all_handles,
             auto_wait=auto_wait,
+            metadata=session_metadata,
         )
+
+        if store:
+            store.write_metadata(session.trajectory)
+
+        return session

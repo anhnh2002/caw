@@ -165,39 +165,47 @@ class TestTrajectoryValidation:
 
 
 class TestSessionMetadata:
-    def test_claude_code_session_metadata(self):
-        from caw.providers.claude_code import ClaudeCodeSession
+    """Metadata is owned by the core Session, not the provider."""
 
-        session = ClaudeCodeSession(
-            mcp_servers=[],
-            metadata={"source_id": "abc", "iteration": 5},
-        )
+    def test_session_metadata_merges_onto_trajectory(self):
+        from unittest.mock import MagicMock
+        from caw.agent import Session
+
+        mock_ps = MagicMock()
+        mock_ps.trajectory = Trajectory(agent="test", metadata={"provider_key": "p"})
+        session = Session(mock_ps, metadata={"user_key": "u"})
         traj = session.trajectory
-        assert traj.metadata == {"source_id": "abc", "iteration": 5}
+        assert traj.metadata == {"provider_key": "p", "user_key": "u"}
 
-    def test_claude_code_session_no_metadata(self):
+    def test_session_metadata_overrides_provider(self):
+        from unittest.mock import MagicMock
+        from caw.agent import Session
+
+        mock_ps = MagicMock()
+        mock_ps.trajectory = Trajectory(agent="test", metadata={"key": "provider"})
+        session = Session(mock_ps, metadata={"key": "session"})
+        assert session.trajectory.metadata["key"] == "session"
+
+    def test_no_metadata(self):
+        from unittest.mock import MagicMock
+        from caw.agent import Session
+
+        mock_ps = MagicMock()
+        mock_ps.trajectory = Trajectory(agent="test")
+        session = Session(mock_ps)
+        assert session.trajectory.metadata == {}
+
+    def test_provider_session_no_metadata(self):
         from caw.providers.claude_code import ClaudeCodeSession
 
         session = ClaudeCodeSession(mcp_servers=[])
-        traj = session.trajectory
-        assert traj.metadata == {}
+        assert session.trajectory.metadata == {}
 
-    def test_codex_session_metadata(self):
-        from caw.providers.codex import CodexSession
-
-        session = CodexSession(
-            mcp_servers=[],
-            metadata={"run_id": "xyz"},
-        )
-        traj = session.trajectory
-        assert traj.metadata == {"run_id": "xyz"}
-
-    def test_codex_session_no_metadata(self):
+    def test_codex_provider_session_no_metadata(self):
         from caw.providers.codex import CodexSession
 
         session = CodexSession(mcp_servers=[])
-        traj = session.trajectory
-        assert traj.metadata == {}
+        assert session.trajectory.metadata == {}
 
 
 # -- Claude Code disallowed tools in CLI args ----------------------------------

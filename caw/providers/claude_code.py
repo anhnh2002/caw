@@ -142,14 +142,12 @@ class ClaudeCodeSession(ProviderSession):
         system_prompt: str | None = None,
         session_id: str | None = None,
         disallowed_tools: list[str] | None = None,
-        metadata: dict[str, Any] | None = None,
     ) -> None:
         self._session_id = session_id or str(uuid.uuid4())
         self._model = model
         self._mcp_servers = mcp_servers
         self._system_prompt = system_prompt
         self._disallowed_tools = disallowed_tools
-        self._metadata: dict[str, Any] = dict(metadata) if metadata else {}
         self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._turns: list[Turn] = []
@@ -443,7 +441,7 @@ class ClaudeCodeSession(ProviderSession):
             turns=list(self._turns),
             usage=self._total_usage,
             duration_ms=self._total_duration_ms,
-            metadata=dict(self._metadata),
+            metadata={},
         )
 
     def end(self) -> Trajectory:
@@ -479,12 +477,10 @@ class ClaudeCodeProvider(Provider):
         system_prompt = kwargs.get("system_prompt")
         session_id = kwargs.get("session_id")
         disallowed_tools = kwargs.get("disallowed_tools")
-        metadata = kwargs.get("metadata")
         return ClaudeCodeSession(
             mcp_servers=mcp_servers,
             model=model,
             system_prompt=system_prompt,
             session_id=session_id,
             disallowed_tools=disallowed_tools,
-            metadata=metadata,
         )

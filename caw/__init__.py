@@ -10,6 +10,7 @@ from caw.models import (
     ContentBlock,
     MCPServer,
     MCPTool,
+    ModelTier,
     TextBlock,
     ThinkingBlock,
     ToolGroup,
@@ -35,6 +36,8 @@ from caw.viewer import ViewerServer, start_viewer_server
 
 # Auto-register built-in providers
 register_provider("claude_code", ClaudeCodeProvider)
+register_provider("claude", ClaudeCodeProvider)
+register_provider("cc", ClaudeCodeProvider)
 register_provider("codex", CodexProvider)
 
 __all__ = [
@@ -51,6 +54,7 @@ __all__ = [
     "MCPServer",
     "MCPServerHandle",
     "MCPTool",
+    "ModelTier",
     "Provider",
     "ProviderSession",
     "Session",

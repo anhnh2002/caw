@@ -5,7 +5,7 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from typing import Any
 
-from caw.models import MCPServer, ToolGroup, Trajectory, Turn
+from caw.models import MCPServer, ModelTier, ToolGroup, Trajectory, Turn
 
 
 class ProviderSession(ABC):
@@ -55,6 +55,17 @@ class Provider(ABC):
     def name(self) -> str:
         """Provider identifier (e.g. 'claude_code', 'codex')."""
         ...
+
+    def resolve_model(self, tier: ModelTier) -> str:
+        """Translate a :class:`ModelTier` into a concrete model identifier.
+
+        Each provider must override this to map abstract tiers (e.g.
+        ``ModelTier.STRONGEST``) to the actual model string it supports.
+        """
+        raise NotImplementedError(
+            f"{self.name} provider does not implement resolve_model(); "
+            f"pass an explicit model string instead of ModelTier.{tier.name}"
+        )
 
     def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
         """Translate ToolGroup into provider-specific session kwargs.

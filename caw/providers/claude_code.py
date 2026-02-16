@@ -17,6 +17,7 @@ from caw.display import Display, get_global_display
 from caw.models import (
     ContentBlock,
     MCPServer,
+    ModelTier,
     TextBlock,
     ThinkingBlock,
     ToolGroup,
@@ -28,6 +29,11 @@ from caw.models import (
 from caw.provider import Provider, ProviderSession
 
 # -- Tool group → Claude Code tool name mapping --------------------------------
+
+_MODEL_TIER_MAP: dict[ModelTier, str] = {
+    ModelTier.STRONGEST: "claude-opus-4-6",
+    ModelTier.FAST: "claude-haiku-4-5-20251001",
+}
 
 _TOOL_GROUP_MAP: dict[ToolGroup, list[str]] = {
     ToolGroup.READER: ["Read", "Glob", "Grep"],
@@ -458,6 +464,9 @@ class ClaudeCodeProvider(Provider):
     @property
     def name(self) -> str:
         return "claude_code"
+
+    def resolve_model(self, tier: ModelTier) -> str:
+        return _MODEL_TIER_MAP[tier]
 
     def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
         if tools == ToolGroup.ALL:

@@ -7,6 +7,20 @@ from dataclasses import dataclass, field
 from typing import Any, Union
 
 
+class ModelTier(enum.Enum):
+    """Abstract model selection tiers.
+
+    Each provider maps these to concrete model identifiers::
+
+        agent = Agent(model=ModelTier.STRONGEST)  # provider picks its best model
+        agent = Agent(model=ModelTier.FAST)        # provider picks its fast model
+        agent = Agent(model="claude-opus-4-6")     # explicit model string still works
+    """
+
+    STRONGEST = "strongest"
+    FAST = "fast"
+
+
 class ToolGroup(enum.Flag):
     """Abstract tool permission groups.
 

@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from caw.display import get_global_display
-from caw.models import AgentSpec, MCPServer, ToolGroup, ToolUse, Trajectory, Turn
+from caw.models import AgentSpec, MCPServer, ModelTier, ToolGroup, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
 from caw.toolkit import ToolKit
@@ -261,7 +261,7 @@ class Agent:
         provider: str | None = None,
         data_dir: str | None = "caw_data",
         system_prompt: str | None = None,
-        model: str | None = None,
+        model: str | ModelTier | None = None,
         reasoning: str | None = None,
         tools: ToolGroup | None = None,
         tool_servers: list[Any] | None = None,
@@ -340,7 +340,7 @@ class Agent:
             handle = handle.as_server()
         self._tool_servers.append(handle)
 
-    def set_model(self, model: str) -> None:
+    def set_model(self, model: str | ModelTier) -> None:
         """Set the model to use for sessions."""
         self._kwargs["model"] = model
 
@@ -407,6 +407,11 @@ class Agent:
         # Agent-level metadata as base, session kwargs override
         if self._metadata:
             session_metadata = {**self._metadata, **session_metadata}
+
+        # Resolve model tier to concrete model string
+        model = merged.get("model")
+        if isinstance(model, ModelTier):
+            merged["model"] = self.provider.resolve_model(model)
 
         # Resolve tool restrictions: default to ALL - INTERACTION for automated pipelines
         tools = merged.pop("tools", None)

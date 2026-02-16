@@ -15,6 +15,7 @@ from caw.display import Display, get_global_display
 from caw.models import (
     ContentBlock,
     MCPServer,
+    ModelTier,
     TextBlock,
     ThinkingBlock,
     ToolGroup,
@@ -393,12 +394,21 @@ class CodexSession(ProviderSession):
         return self.trajectory
 
 
+_MODEL_TIER_MAP: dict[ModelTier, str] = {
+    ModelTier.STRONGEST: "gpt-5.3-codex",
+    ModelTier.FAST: "gpt-5.3-codex-spark",
+}
+
+
 class CodexProvider(Provider):
     """Provider that delegates to the ``codex`` CLI."""
 
     @property
     def name(self) -> str:
         return "codex"
+
+    def resolve_model(self, tier: ModelTier) -> str:
+        return _MODEL_TIER_MAP[tier]
 
     def resolve_tool_restrictions(self, tools: ToolGroup) -> dict[str, Any]:
         if tools == ToolGroup.ALL:

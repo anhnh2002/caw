@@ -21,6 +21,7 @@ def main():
     agent = Agent(
         system_prompt="You have access to math tools. Use them to answer questions.",
         stateless_tools=[add, multiply],
+        data_dir="caw_data",
     )
 
     with agent.start_session() as session:

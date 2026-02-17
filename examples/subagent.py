@@ -16,6 +16,7 @@ def main():
 
     agent = Agent(
         system_prompt="You are a senior engineer. Use the Code Reviewer tool to review code when asked.",
+        data_dir="caw_data",
     )
     agent.add_subagent(reviewer)
 

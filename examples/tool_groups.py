@@ -9,7 +9,7 @@ from caw import Agent, ToolGroup
 
 def main():
     # Only allow Read, Glob, Grep — no Bash, Write, Edit, WebSearch, etc.
-    agent = Agent(tools=ToolGroup.READER)
+    agent = Agent(tools=ToolGroup.READER, data_dir="caw_data")
 
     traj = agent.completion(
         "List every tool you have access to by name. "

@@ -10,7 +10,7 @@ from caw.viewer import start_viewer_server
 
 
 def main():
-    agent = Agent()
+    agent = Agent(data_dir="caw_data")
 
     # Run a short session and save the trajectory to a temp file
     traj_path = os.path.join(tempfile.gettempdir(), "caw_example_traj.json")

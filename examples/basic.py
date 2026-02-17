@@ -8,7 +8,7 @@ from caw import Agent
 
 
 def main():
-    agent = Agent()
+    agent = Agent(data_dir="caw_data")
 
     print("=== Single turn ===")
     with agent.start_session() as session:

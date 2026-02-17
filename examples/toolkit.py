@@ -28,6 +28,7 @@ def main():
     agent = Agent(
         system_prompt="You have access to a user database. Use the tools to answer questions about users.",
         tool_servers=[db],
+        data_dir="caw_data",
     )
 
     with agent.start_session() as session:

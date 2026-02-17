@@ -489,7 +489,8 @@ function buildViewData(raw) {
   }
   for (const turn of (raw.turns || [])) countTools(turn.output);
 
-  // Messages list
+  // Messages list — split each turn's output into separate messages
+  // when block types alternate between text/thinking and tool_use.
   const messages = [];
   if (raw.system_prompt) {
     messages.push({ role: 'system', content: [{ type: 'text', text: raw.system_prompt }] });
@@ -497,14 +498,28 @@ function buildViewData(raw) {
   for (const turn of (raw.turns || [])) {
     messages.push({ role: 'user', content: [{ type: 'text', text: turn.input }] });
     const output = turn.output || [];
-    const isAllTools = output.length > 0 && output.every(b => b.type === 'tool_use');
-    messages.push({
-      role: isAllTools ? 'tool' : 'assistant',
-      model: raw.model,
-      content: output,
-      usage: turn.usage,
-      duration_ms: turn.duration_ms,
-    });
+
+    // Group consecutive blocks: text/thinking together, tool_use together
+    const groups = [];
+    for (const block of output) {
+      const isTool = block.type === 'tool_use';
+      if (groups.length === 0 || groups[groups.length - 1].isTool !== isTool) {
+        groups.push({ isTool, blocks: [block] });
+      } else {
+        groups[groups.length - 1].blocks.push(block);
+      }
+    }
+
+    // First group gets usage/duration metadata
+    for (let gi = 0; gi < groups.length; gi++) {
+      const g = groups[gi];
+      messages.push({
+        role: g.isTool ? 'tool' : 'assistant',
+        model: raw.model,
+        content: g.blocks,
+        ...(gi === 0 ? { usage: turn.usage, duration_ms: turn.duration_ms } : {}),
+      });
+    }
   }
   return { metadata: meta, tool_usage: toolUsage, messages };
 }

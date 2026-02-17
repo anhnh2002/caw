@@ -211,9 +211,8 @@ def get_global_display() -> Display | None:
     global _global_display, _global_display_resolved
     if _global_display is None and not _global_display_resolved:
         _global_display_resolved = True
-        env_mode = os.environ.get(LOG_ENV_VAR)
-        if env_mode:
-            _global_display = Display(mode=env_mode)
+        env_mode = os.environ.get(LOG_ENV_VAR, "short")
+        _global_display = Display(mode=env_mode)
     return _global_display
 
 

@@ -161,6 +161,7 @@ class ClaudeCodeSession(ProviderSession):
         self._total_duration_ms = 0
         self._mcp_config_path: str | None = None
         self._last_raw_output: str = ""
+        self._step_callback = None
 
     # ------------------------------------------------------------------
     # MCP config helpers
@@ -270,6 +271,8 @@ class ClaudeCodeSession(ProviderSession):
                 result = self._process_event(event, blocks, tool_blocks, display)
                 if result is not None:
                     usage, duration_ms = result
+                if self._step_callback and blocks:
+                    self._step_callback(list(blocks))
 
             # Read stderr after stdout is exhausted
             stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]
@@ -306,6 +309,9 @@ class ClaudeCodeSession(ProviderSession):
     def detect_usage_limit(self, turn: Turn) -> int | None:
         """Detect Claude Code usage-limit messages in the turn's result text."""
         return detect_usage_limit(turn.result)
+
+    def set_step_callback(self, callback):
+        self._step_callback = callback
 
     # ------------------------------------------------------------------
     # Per-event processing

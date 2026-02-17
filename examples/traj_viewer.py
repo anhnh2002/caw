@@ -15,7 +15,7 @@ def main():
     # Run a short session and save the trajectory to a temp file
     traj_path = os.path.join(tempfile.gettempdir(), "caw_example_traj.json")
 
-    with agent.start_session(save_on_end=traj_path) as session:
+    with agent.start_session(traj_path=traj_path) as session:
         session.send("What is 2 + 2? Answer in one sentence.")
 
     print(f"\nTrajectory saved to {traj_path}")

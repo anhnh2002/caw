@@ -84,6 +84,10 @@ class CodexSession(ProviderSession):
         self._total_usage = UsageStats()
         self._total_duration_ms = 0
         self._last_raw_output: str = ""
+        self._step_callback = None
+
+    def set_step_callback(self, callback):
+        self._step_callback = callback
 
     # ------------------------------------------------------------------
     # MCP config helpers
@@ -193,6 +197,8 @@ class CodexSession(ProviderSession):
                 result = self._process_event(event, blocks, tool_blocks, display)
                 if result is not None:
                     usage = result
+                if self._step_callback and blocks:
+                    self._step_callback(list(blocks))
 
             # Read stderr after stdout is exhausted
             stderr = proc.stderr.read() if proc.stderr else ""  # type: ignore[union-attr]

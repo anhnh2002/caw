@@ -113,7 +113,7 @@ class Session:
         self._readonly = False
         self._send_lock = threading.Lock()
         self._async_send_lock: asyncio.Lock | None = None
-        self._save_on_end: str | Path | None = None
+        self._traj_path: str | Path | None = None
 
     async def send_async(self, message: str) -> Turn:
         """Async version of :meth:`send` — runs in a thread.
@@ -151,7 +151,21 @@ class Session:
             current_message = message
 
             while True:
+                # Set up per-step callback so traj_path is updated in real time
+                def _save_step(blocks, _msg=current_message):
+                    traj = self.trajectory
+                    partial_turn = Turn(input=_msg, output=list(blocks))
+                    traj.turns.append(partial_turn)
+                    if self._traj_path:
+                        p = Path(self._traj_path)
+                        p.parent.mkdir(parents=True, exist_ok=True)
+                        p.write_text(json.dumps(traj.to_dict(), indent=2))
+                    if self._store:
+                        self._store._save_trajectory(traj)
+
+                self._session.set_step_callback(_save_step)
                 turn = self._session.send(current_message)
+                self._session.set_step_callback(None)
 
                 # Attach subagent trajectories from marker files
                 _attach_subagent_trajectories(turn, self._subagent_traj_dir)
@@ -196,11 +210,11 @@ class Session:
             except Exception:
                 pass
         # Auto-save trajectory if configured
-        if self._save_on_end is not None:
+        if self._traj_path is not None:
             try:
-                self.save_trajectory(self._save_on_end)
+                self.save_trajectory(self._traj_path)
             except Exception:
-                logger.warning("Failed to save trajectory to %s", self._save_on_end, exc_info=True)
+                logger.warning("Failed to save trajectory to %s", self._traj_path, exc_info=True)
         return traj
 
     @property
@@ -270,7 +284,7 @@ class Agent:
     def __init__(
         self,
         provider: str | None = None,
-        data_dir: str | None = "caw_data",
+        data_dir: str | None = None,
         system_prompt: str | None = None,
         model: str | ModelTier | None = None,
         reasoning: str | None = None,
@@ -409,14 +423,14 @@ class Agent:
         session.send(message)
         return session.end()
 
-    def start_session(self, save_on_end: str | Path | None = None, **kwargs: Any) -> Session:
+    def start_session(self, traj_path: str | Path | None = None, **kwargs: Any) -> Session:
         """Start a new interactive session with the agent.
 
         Parameters
         ----------
-        save_on_end:
-            If set, the trajectory is automatically saved to this path
-            when :meth:`Session.end` is called.
+        traj_path:
+            If set, the trajectory is saved to this path after each
+            step and when :meth:`Session.end` is called.
         """
         merged = {**self._kwargs, **kwargs}
 
@@ -482,8 +496,8 @@ class Agent:
             metadata=session_metadata,
         )
 
-        if save_on_end is not None:
-            session._save_on_end = save_on_end
+        if traj_path is not None:
+            session._traj_path = traj_path
 
         if store:
             store.write_metadata(session.trajectory)

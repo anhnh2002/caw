@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 from caw.models import MCPServer, ModelTier, ToolGroup, Trajectory, Turn
@@ -45,6 +46,10 @@ class ProviderSession(ABC):
     def last_raw_output(self) -> str | None:
         """Raw CLI stdout from the most recent send() call (if available)."""
         return None
+
+    def set_step_callback(self, callback: Callable[[list], None] | None) -> None:
+        """Set callback invoked after each step within send()."""
+        pass  # default no-op; concrete providers override
 
 
 class Provider(ABC):

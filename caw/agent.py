@@ -113,6 +113,7 @@ class Session:
         self._readonly = False
         self._send_lock = threading.Lock()
         self._async_send_lock: asyncio.Lock | None = None
+        self._save_on_end: str | Path | None = None
 
     async def send_async(self, message: str) -> Turn:
         """Async version of :meth:`send` — runs in a thread.
@@ -194,6 +195,12 @@ class Session:
                 handle.stop_sync()
             except Exception:
                 pass
+        # Auto-save trajectory if configured
+        if self._save_on_end is not None:
+            try:
+                self.save_trajectory(self._save_on_end)
+            except Exception:
+                logger.warning("Failed to save trajectory to %s", self._save_on_end, exc_info=True)
         return traj
 
     @property
@@ -402,8 +409,15 @@ class Agent:
         session.send(message)
         return session.end()
 
-    def start_session(self, **kwargs: Any) -> Session:
-        """Start a new interactive session with the agent."""
+    def start_session(self, save_on_end: str | Path | None = None, **kwargs: Any) -> Session:
+        """Start a new interactive session with the agent.
+
+        Parameters
+        ----------
+        save_on_end:
+            If set, the trajectory is automatically saved to this path
+            when :meth:`Session.end` is called.
+        """
         merged = {**self._kwargs, **kwargs}
 
         # Pop auto_wait and metadata — these are Session concerns, not provider kwargs
@@ -467,6 +481,9 @@ class Agent:
             auto_wait=auto_wait,
             metadata=session_metadata,
         )
+
+        if save_on_end is not None:
+            session._save_on_end = save_on_end
 
         if store:
             store.write_metadata(session.trajectory)

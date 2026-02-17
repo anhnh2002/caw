@@ -140,7 +140,7 @@ class TestTrajectoryValidation:
 
     def test_normal_trajectory_is_complete(self):
         turn = Turn(input="hello", output=[TextBlock(text="world")])
-        traj = Trajectory(agent="test", turns=[turn])
+        traj = Trajectory(agent="test", turns=[turn], completed_at="2025-06-15T00:00:00+00:00")
         assert traj.is_complete
         assert not traj.is_usage_limited
 
@@ -149,7 +149,7 @@ class TestTrajectoryValidation:
             input="hello",
             output=[TextBlock(text="You've hit your usage limit. It resets at 3am (UTC).")],
         )
-        traj = Trajectory(agent="test", turns=[turn])
+        traj = Trajectory(agent="test", turns=[turn], completed_at="2025-06-15T00:00:00+00:00", usage_limited=True)
         assert traj.is_usage_limited
         assert not traj.is_complete
 

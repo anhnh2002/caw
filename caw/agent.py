@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import datetime
 import json
 import logging
 import os
@@ -182,6 +183,9 @@ class Session:
             raise RuntimeError("Cannot send messages on a loaded session")
         self._session.end()
         traj = self.trajectory
+        traj.completed_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
+        if traj.turns and self._session.detect_usage_limit(traj.turns[-1]) is not None:
+            traj.usage_limited = True
         if self._store is not None:
             self._store.finalize(traj)
         # Stop all tool server handles

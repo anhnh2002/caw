@@ -212,6 +212,8 @@ class Trajectory:
     model: str = ""
     session_id: str = ""
     created_at: str = ""
+    completed_at: str = ""
+    usage_limited: bool = False
     system_prompt: str = ""
     reasoning: str = ""
     mcp_servers: list[MCPServer] = field(default_factory=list)
@@ -257,16 +259,22 @@ class Trajectory:
 
     @property
     def is_usage_limited(self) -> bool:
-        """Whether the session ended due to a usage limit."""
-        if not self.turns:
-            return False
-        text = self.turns[-1].result.lower()
-        return "limit" in text and "resets" in text
+        """Whether the session ended due to a usage limit.
+
+        Set by ``Session.end()`` using the provider's ``detect_usage_limit``.
+        """
+        return self.usage_limited
 
     @property
     def is_complete(self) -> bool:
-        """Whether the session completed normally (has turns and wasn't usage-limited)."""
-        return len(self.turns) > 0 and not self.is_usage_limited
+        """Whether the session completed normally.
+
+        A trajectory is complete when it has been finalized (``completed_at``
+        is set by ``Session.end()``) and was not usage-limited.  Mid-session
+        snapshots written by ``append_turn`` have an empty ``completed_at``
+        and are therefore not considered complete.
+        """
+        return bool(self.completed_at) and not self.is_usage_limited
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -274,6 +282,8 @@ class Trajectory:
             "model": self.model,
             "session_id": self.session_id,
             "created_at": self.created_at,
+            "completed_at": self.completed_at,
+            "usage_limited": self.usage_limited,
             "system_prompt": self.system_prompt,
             "reasoning": self.reasoning,
             "mcp_servers": [
@@ -294,6 +304,8 @@ class Trajectory:
             model=d.get("model", ""),
             session_id=d.get("session_id", ""),
             created_at=d.get("created_at", ""),
+            completed_at=d.get("completed_at", ""),
+            usage_limited=d.get("usage_limited", False),
             system_prompt=d.get("system_prompt", ""),
             reasoning=d.get("reasoning", ""),
             mcp_servers=[

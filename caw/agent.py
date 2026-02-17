@@ -369,6 +369,7 @@ class Agent:
             model=self._kwargs.get("model", ""),
             reasoning=self._kwargs.get("reasoning", ""),
             tools=self._kwargs.get("tools"),
+            tool_servers=list(self._tool_servers),
             mcp_servers=list(self._mcp_servers),
             subagents=list(self._subagents),
             metadata=dict(self._metadata),

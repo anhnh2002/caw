@@ -468,6 +468,7 @@ class SubagentState:
     traj_dir: str
     jsonl_path: str
     tools: Any = None
+    tool_servers: list = field(default_factory=list)
     mcp_servers: list = field(default_factory=list)
     subagents: list = field(default_factory=list)
 
@@ -480,6 +481,7 @@ def _run_subagent_blocking(
     jsonl_path: str,
     subagent_name: str,
     tools: Any = None,
+    tool_servers: list | None = None,
     mcp_servers: list | None = None,
     subagents: list | None = None,
 ) -> str:
@@ -495,6 +497,9 @@ def _run_subagent_blocking(
         tools=tools,
         data_dir=None,
     )
+
+    for ts in tool_servers or []:
+        agent.add_tool_server(ts)
 
     for srv in mcp_servers or []:
         agent.add_mcp_server(srv)
@@ -565,6 +570,7 @@ def create_subagent_tool_server(
         traj_dir=traj_dir,
         jsonl_path=jsonl_path or "",
         tools=getattr(spec, "tools", None),
+        tool_servers=list(getattr(spec, "tool_servers", None) or []),
         mcp_servers=list(getattr(spec, "mcp_servers", None) or []),
         subagents=list(getattr(spec, "subagents", None) or []),
     )
@@ -587,6 +593,7 @@ def create_subagent_tool_server(
             s.jsonl_path,
             s.name,
             s.tools,
+            s.tool_servers,
             s.mcp_servers,
             s.subagents,
         )

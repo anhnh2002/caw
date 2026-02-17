@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import threading
 import uuid as uuid_mod
 from typing import Any, ClassVar
 
@@ -70,20 +71,26 @@ class ToolKit:
 
     _server_name: ClassVar[str] = ""
     _display_name: ClassVar[str] = ""
+    _thread_safe: ClassVar[bool] = False
 
     def __init_subclass__(
         cls,
         server_name: str = "",
         display_name: str = "",
+        thread_safe: bool = False,
         **kwargs: Any,
     ) -> None:
         super().__init_subclass__(**kwargs)
         cls._server_name = server_name or cls._server_name
         cls._display_name = display_name or cls._display_name
+        if thread_safe:
+            cls._thread_safe = True
 
     def as_server(self, server_id: str | None = None) -> MCPServerHandle:
         """Build and return an :class:`MCPServerHandle` with all ``@tool`` methods registered."""
         cls = type(self)
+        if cls._thread_safe and not hasattr(self, "_toolkit_lock"):
+            self._toolkit_lock = threading.Lock()
         sid = server_id or f"{cls._server_name or cls.__name__}_{uuid_mod.uuid4().hex[:6]}"
 
         handle = create_mcp_http_server_bundle(
@@ -146,6 +153,10 @@ def _make_tool_func(method, info: dict[str, Any]):
             self_instance = get_state_from_context(ctx)
             if user_has_ctx:
                 kwargs["ctx"] = ctx
+            lock = getattr(self_instance, "_toolkit_lock", None)
+            if lock is not None:
+                with lock:
+                    return await method(self_instance, **kwargs)
             return await method(self_instance, **kwargs)
 
     else:
@@ -155,6 +166,10 @@ def _make_tool_func(method, info: dict[str, Any]):
             self_instance = get_state_from_context(ctx)
             if user_has_ctx:
                 kwargs["ctx"] = ctx
+            lock = getattr(self_instance, "_toolkit_lock", None)
+            if lock is not None:
+                with lock:
+                    return method(self_instance, **kwargs)
             return method(self_instance, **kwargs)
 
     tool_name = info.get("name") or method.__name__

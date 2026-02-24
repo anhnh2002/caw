@@ -2,16 +2,14 @@
   "_comment": "Pricing in USD per 1 million tokens, keyed by agent then model",
   "codex": {
     "gpt-5.2-codex": {
-      "input": 0.0,
-      "cached_input": 0.0,
-      "output": 0.0
-    }
-  },
-  "claude_code": {
-    "claude-sonnet-4-5-20250929": {
-      "input": 0.0,
-      "cached_input": 0.0,
-      "output": 0.0
+      "input": 1.75,
+      "cached_input": 0.175,
+      "output": 14.0
+    },
+    "gpt-5.3-codex": {
+      "input": 1.75,
+      "cached_input": 0.175,
+      "output": 14.0
     }
   }
 }

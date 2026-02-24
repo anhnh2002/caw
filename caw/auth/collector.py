@@ -203,22 +203,24 @@ def collect(
     source_home: str | None = None,
     force: bool = False,
     link: bool = False,
+    dest_dir: str | Path | None = None,
 ) -> Path:
-    """Collect credentials from host into ~/.caw/auth/.
+    """Collect credentials from host into an auth directory.
 
     Args:
         agents: List of agent names, or None / ["all"] for all agents.
         source_home: Home directory to read credentials from.
         force: Overwrite existing auth dir without prompting.
         link: Also run link() after collecting.
+        dest_dir: Custom destination directory. Defaults to ~/.caw/auth/.
 
     Returns:
         Path to the auth directory.
     """
     src_home = Path(source_home) if source_home else Path.home()
-    auth_dir = AUTH_DIR
+    auth_dir = Path(dest_dir) if dest_dir else AUTH_DIR
 
-    console.print("[bold]Collecting credentials into ~/.caw/auth/[/bold]\n")
+    console.print(f"[bold]Collecting credentials into {auth_dir}/[/bold]\n")
 
     # Resolve providers
     selected = _resolve_providers(agents or ["all"])
@@ -317,6 +319,6 @@ def collect(
         console.print()
         from .linker import link as do_link
 
-        do_link(agents=agents, force=force)
+        do_link(agents=agents, force=force, auth_dir=auth_dir)
 
     return auth_dir

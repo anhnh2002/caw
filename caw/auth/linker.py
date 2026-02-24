@@ -15,25 +15,35 @@ AUTH_DIR = Path.home() / ".caw" / "auth"
 BACKUPS_DIR = AUTH_DIR / ".backups"
 
 
-def _load_manifest() -> Manifest:
-    manifest_path = AUTH_DIR / "manifest.json"
+def _load_manifest(auth_dir: Path | None = None) -> tuple[Manifest, Path]:
+    """Load manifest from auth_dir. Returns (manifest, resolved_auth_dir)."""
+    resolved = auth_dir if auth_dir else AUTH_DIR
+    manifest_path = resolved / "manifest.json"
     if not manifest_path.exists():
         console.print("[red]Error: manifest.json not found. Run `caw auth collect` first.[/red]")
         raise SystemExit(1)
-    return Manifest.load(manifest_path)
+    return Manifest.load(manifest_path), resolved
 
 
 def link(
     agents: list[str] | None = None,
     dry_run: bool = False,
     force: bool = False,
+    auth_dir: Path | None = None,
 ) -> None:
-    """Replace host credential files with symlinks to ~/.caw/auth/.
+    """Replace host credential files with symlinks to the auth directory.
 
     Only links files with type=credential and strategy=symlink.
-    Backs up originals to ~/.caw/auth/.backups/ first.
+    Backs up originals to <auth_dir>/.backups/ first.
+
+    Args:
+        agents: Agent names to link, or None for all.
+        dry_run: Show what would be done without making changes.
+        force: Overwrite existing backups.
+        auth_dir: Custom auth directory. Defaults to ~/.caw/auth/.
     """
-    manifest = _load_manifest()
+    manifest, resolved_dir = _load_manifest(auth_dir)
+    backups_dir = resolved_dir / ".backups"
     host_home = Path(manifest.host_home)
 
     console.print("[bold]Linking credential files...[/bold]\n")
@@ -52,7 +62,7 @@ def link(
             if mf.type != "credential" or mf.strategy != "symlink":
                 continue
 
-            canonical = AUTH_DIR / mf.src
+            canonical = resolved_dir / mf.src
             original = host_home / mf.host_original
 
             if not canonical.exists():
@@ -73,7 +83,7 @@ def link(
 
             # Backup original if it exists and is not already a symlink
             if original.exists() and not original.is_symlink():
-                backup_path = BACKUPS_DIR / mf.host_original
+                backup_path = backups_dir / mf.host_original
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
                 if backup_path.exists() and not force:
                     console.print(
@@ -99,12 +109,19 @@ def link(
 def unlink(
     agents: list[str] | None = None,
     dry_run: bool = False,
+    auth_dir: Path | None = None,
 ) -> None:
-    """Restore original credential files from ~/.caw/auth/.backups/.
+    """Restore original credential files from backups.
 
     Removes symlinks and copies backups back to original locations.
+
+    Args:
+        agents: Agent names to unlink, or None for all.
+        dry_run: Show what would be done without making changes.
+        auth_dir: Custom auth directory. Defaults to ~/.caw/auth/.
     """
-    manifest = _load_manifest()
+    manifest, resolved_dir = _load_manifest(auth_dir)
+    backups_dir = resolved_dir / ".backups"
     host_home = Path(manifest.host_home)
 
     console.print("[bold]Unlinking credential files...[/bold]\n")
@@ -123,10 +140,10 @@ def unlink(
                 continue
 
             original = host_home / mf.host_original
-            backup_path = BACKUPS_DIR / mf.host_original
+            backup_path = backups_dir / mf.host_original
 
             # Check if it's currently a symlink pointing to our canonical
-            canonical = AUTH_DIR / mf.src
+            canonical = resolved_dir / mf.src
             if original.is_symlink() and original.resolve() == canonical.resolve():
                 if backup_path.exists():
                     if dry_run:

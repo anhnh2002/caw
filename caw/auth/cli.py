@@ -7,7 +7,6 @@ from typing import Annotated, Optional
 
 import typer
 
-from .collector import AUTH_DIR
 
 app = typer.Typer(help="Manage credentials for Docker containers.")
 
@@ -76,12 +75,10 @@ def status_cmd(
 @app.command("docker-flags")
 def docker_flags():
     """Output the -v flag string for docker."""
-    from .manifest import Manifest
+    from .status import get_docker_flags as do_get_docker_flags
 
-    manifest_path = AUTH_DIR / "manifest.json"
-    if not manifest_path.exists():
+    try:
+        typer.echo(do_get_docker_flags())
+    except FileNotFoundError:
         typer.echo("Error: manifest.json not found. Run `caw auth collect` first.", err=True)
         raise typer.Exit(1)
-
-    manifest = Manifest.load(manifest_path)
-    typer.echo(f"-v {AUTH_DIR}:{manifest.mount_point}:rw")

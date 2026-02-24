@@ -5,10 +5,11 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import re
 import subprocess
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 from caw.display import Display, get_global_display
@@ -28,6 +29,60 @@ from caw.pricing import compute_cost
 from caw.provider import Provider, ProviderSession
 
 logger = logging.getLogger(__name__)
+
+# -- Usage-limit detection ----------------------------------------------------
+
+_CODEX_LIMIT_RE = re.compile(
+    r"try again at\s+(\d{1,2}):(\d{2})\s*(AM|PM)",
+    re.IGNORECASE,
+)
+
+_DEFAULT_WAIT_MINUTES = 60
+
+
+def _parse_codex_reset_minutes(text: str) -> int | None:
+    """Parse a Codex limit message and return minutes until reset (+ 5 min buffer).
+
+    Expected format: ``"try again at 3:47 PM"``.
+    No timezone is provided so local time is assumed.
+    Returns ``None`` if the pattern is not found.
+    """
+    match = _CODEX_LIMIT_RE.search(text)
+    if not match:
+        return None
+
+    hour = int(match.group(1))
+    minute = int(match.group(2))
+    ampm = match.group(3).lower()
+
+    # Convert 12-hour to 24-hour
+    if ampm == "am" and hour == 12:
+        hour = 0
+    elif ampm == "pm" and hour != 12:
+        hour += 12
+
+    now = datetime.now()  # local time (Codex doesn't include timezone)
+    reset_time = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+    if reset_time <= now:
+        reset_time += timedelta(days=1)
+
+    delta = reset_time - now
+    wait_minutes = int(delta.total_seconds() / 60) + 5  # 5-minute buffer
+    return max(1, wait_minutes)
+
+
+def detect_codex_usage_limit(text: str) -> int | None:
+    """Check whether *text* indicates a Codex usage limit.
+
+    Returns the number of minutes to wait before retrying, or ``None`` if no
+    limit was detected.
+    """
+    lower = text.lower()
+    if "usage limit" not in lower:
+        return None
+    return _parse_codex_reset_minutes(text) or _DEFAULT_WAIT_MINUTES
+
 
 # -- Subprocess registry + atexit cleanup -------------------------------------
 
@@ -228,6 +283,14 @@ class CodexSession(ProviderSession):
         return turn
 
     # ------------------------------------------------------------------
+    # Usage-limit detection (called by core Session auto-wait loop)
+    # ------------------------------------------------------------------
+
+    def detect_usage_limit(self, turn: Turn) -> int | None:
+        """Detect Codex usage-limit messages in the turn's result text."""
+        return detect_codex_usage_limit(turn.result)
+
+    # ------------------------------------------------------------------
     # Per-event processing
     # ------------------------------------------------------------------
 
@@ -348,8 +411,20 @@ class CodexSession(ProviderSession):
             return self._parse_usage(event)
 
         elif event_type in ("turn.failed", "error"):
-            error_msg = event.get("message", event.get("error", "Unknown error"))
-            raise RuntimeError(f"Codex turn failed: {error_msg}")
+            raw = event.get("message", event.get("error", "Unknown error"))
+            if isinstance(raw, dict):
+                error_msg = raw.get("message", raw.get("error", str(raw)))
+            else:
+                error_msg = str(raw)
+            # Usage-limit errors are recoverable — surface as text so the
+            # auto-wait loop in Session.send() can detect and retry.
+            if detect_codex_usage_limit(error_msg) is not None:
+                block = TextBlock(text=error_msg)
+                blocks.append(block)
+                if display:
+                    display.on_text(block)
+            else:
+                raise RuntimeError(f"Codex turn failed: {error_msg}")
 
         return None
 

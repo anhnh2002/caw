@@ -11,6 +11,11 @@ from caw.providers.claude_code import (
     _parse_reset_minutes,
     detect_usage_limit,
 )
+from caw.providers.codex import (
+    _DEFAULT_WAIT_MINUTES as _CODEX_DEFAULT_WAIT_MINUTES,
+    _parse_codex_reset_minutes,
+    detect_codex_usage_limit,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -178,6 +183,36 @@ class TestProviderSessionDefault:
 class TestCoreSessionAutoWait:
     """Tests that the core Session.send() drives the wait loop."""
 
+    @patch("caw.agent.time.sleep")
+    def test_codex_auto_wait_sleeps_and_retries(self, mock_sleep):
+        """Codex usage-limit turns trigger the same auto-wait loop."""
+        from caw.agent import Session, _AUTO_WAIT_RESUME_MESSAGE
+        from caw.models import TextBlock, Turn
+
+        limit_turn = Turn(
+            input="hi",
+            output=[
+                TextBlock(
+                    text="You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:47 PM."
+                )
+            ],
+        )
+        ok_turn = Turn(input=_AUTO_WAIT_RESUME_MESSAGE, output=[TextBlock(text="Done!")])
+
+        mock_ps = MagicMock()
+        mock_ps.send.side_effect = [limit_turn, ok_turn]
+        # Simulate CodexSession.detect_usage_limit behaviour
+        mock_ps.detect_usage_limit.side_effect = lambda t: detect_codex_usage_limit(t.result)
+        mock_ps.last_raw_output = ""
+        mock_ps.trajectory = MagicMock()
+
+        session = Session(mock_ps, auto_wait=True)
+        result = session.send("hi")
+
+        assert result is ok_turn
+        mock_sleep.assert_called_once()
+        assert mock_ps.send.call_count == 2
+
     def test_session_auto_wait_true_by_default(self):
         from caw.agent import Session
 
@@ -239,3 +274,109 @@ class TestCoreSessionAutoWait:
         mock_sleep.assert_called_once_with(5 * 60)
         assert mock_ps.send.call_count == 2
         assert mock_ps.send.call_args_list[1][0][0] == _AUTO_WAIT_RESUME_MESSAGE
+
+
+# ---------------------------------------------------------------------------
+# Codex usage-limit detection
+# ---------------------------------------------------------------------------
+
+
+class TestDetectCodexUsageLimit:
+    """Tests for the Codex detection function."""
+
+    def test_no_limit(self):
+        assert detect_codex_usage_limit("Here is your answer.") is None
+
+    def test_missing_usage_limit_phrase(self):
+        assert detect_codex_usage_limit("try again at 3:47 PM") is None
+
+    def test_simple_limit_message(self):
+        text = (
+            "You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage "
+            "to purchase more credits or try again at 3:47 PM."
+        )
+        result = detect_codex_usage_limit(text)
+        assert result is not None
+        assert isinstance(result, int)
+        assert result >= 1
+
+    def test_limit_without_time_returns_default(self):
+        text = "You've hit your usage limit. Please wait."
+        result = detect_codex_usage_limit(text)
+        assert result == _CODEX_DEFAULT_WAIT_MINUTES
+
+
+class TestParseCodexResetMinutes:
+    """Tests for the Codex reset-time parser."""
+
+    def test_no_match(self):
+        assert _parse_codex_reset_minutes("No reset info here") is None
+
+    def test_pm_time(self):
+        text = "try again at 3:47 PM"
+        result = _parse_codex_reset_minutes(text)
+        assert result is not None
+        assert result >= 1
+
+    def test_am_time(self):
+        text = "try again at 6:00 AM"
+        result = _parse_codex_reset_minutes(text)
+        assert result is not None
+        assert result >= 1
+
+    def test_12pm(self):
+        text = "try again at 12:00 PM"
+        result = _parse_codex_reset_minutes(text)
+        assert result is not None
+        assert result >= 1
+
+    def test_12am(self):
+        text = "try again at 12:00 AM"
+        result = _parse_codex_reset_minutes(text)
+        assert result is not None
+        assert result >= 1
+
+    def test_includes_buffer(self):
+        """The returned minutes should include a 5-minute safety buffer."""
+        from datetime import datetime, timedelta
+
+        text = "try again at 3:47 PM"
+        result = _parse_codex_reset_minutes(text)
+        assert result is not None
+
+        now = datetime.now()
+        reset = now.replace(hour=15, minute=47, second=0, microsecond=0)
+        if reset <= now:
+            reset += timedelta(days=1)
+        raw_minutes = int((reset - now).total_seconds() / 60)
+
+        assert result == raw_minutes + 5
+
+
+class TestCodexSessionDetectUsageLimit:
+    """Tests for CodexSession.detect_usage_limit override."""
+
+    def test_returns_none_for_normal_turn(self):
+        from caw.models import TextBlock, Turn
+        from caw.providers.codex import CodexSession
+
+        session = CodexSession(mcp_servers=[])
+        turn = Turn(input="hi", output=[TextBlock(text="hello")])
+        assert session.detect_usage_limit(turn) is None
+
+    def test_detects_limit(self):
+        from caw.models import TextBlock, Turn
+        from caw.providers.codex import CodexSession
+
+        session = CodexSession(mcp_servers=[])
+        turn = Turn(
+            input="hi",
+            output=[
+                TextBlock(
+                    text="You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at 3:47 PM."
+                )
+            ],
+        )
+        result = session.detect_usage_limit(turn)
+        assert result is not None
+        assert result >= 1

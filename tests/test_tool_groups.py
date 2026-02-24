@@ -35,6 +35,9 @@ class TestToolGroupArithmetic:
         result = ToolGroup.ALL.__sub__(42)
         assert result is NotImplemented
 
+    def test_no_interaction_equals_all_minus_interaction(self):
+        assert ToolGroup.NO_INTERACTION == ToolGroup.ALL - ToolGroup.INTERACTION
+
     def test_all_contains_every_group(self):
         for group in (
             ToolGroup.READER,

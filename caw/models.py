@@ -39,6 +39,7 @@ class ToolGroup(enum.Flag):
     INTERACTION = enum.auto()
 
     ALL = READER | WRITER | EXEC | WEB | PARALLEL | INTERACTION
+    NO_INTERACTION = READER | WRITER | EXEC | WEB | PARALLEL
 
     def __sub__(self, other):
         if not isinstance(other, ToolGroup):

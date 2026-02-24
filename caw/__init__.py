@@ -33,7 +33,7 @@ from caw.mcp import (
 )
 from caw.toolkit import ToolKit, tool
 from caw.viewer import ViewerServer, start_viewer_server
-from caw.auth import collect as auth_collect, get_status as auth_get_status, get_docker_flags as auth_get_docker_flags
+from caw.auth import setup as auth_setup, get_status as auth_get_status, get_docker_flags as auth_get_docker_flags
 
 # Auto-register built-in providers
 register_provider("claude_code", ClaudeCodeProvider)
@@ -78,7 +78,7 @@ __all__ = [
     "tool",
     "ToolKit",
     "ViewerServer",
-    "auth_collect",
+    "auth_setup",
     "auth_get_status",
     "auth_get_docker_flags",
 ]

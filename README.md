@@ -155,135 +155,16 @@ Sessions are persisted to JSONL in `caw_data/` by default.
 
 ## CLI: `caw auth` — Credential Management for Docker Containers
 
-Coding agents store OAuth credentials in home directory files (e.g., `~/.claude/.credentials.json`). When running agents inside Docker containers, token refresh creates new tokens (OAuth rotation), invalidating the host's tokens.
-
-`caw auth` solves this by making `~/.caw/auth/` the canonical location for all credential files, mounting it read-write into containers, and using symlinks so writes propagate in real-time.
-
-### How it works
-
-```
-HOST:                                         CONTAINER:
-
-~/.claude/.credentials.json                   /home/playground/.claude/.credentials.json
-    ↓ symlink                                     ↓ symlink
-~/.caw/auth/claude/credentials.json  ←—RW mount—→  /tmp/caw_auth/claude/credentials.json
-```
-
-When any process (host or container) refreshes a token, the write goes through the symlink to the canonical file in `~/.caw/auth/`, visible everywhere immediately.
-
-### Usage
+Manages coding agent OAuth credentials so they stay in sync between your host and Docker containers. Supports Claude Code, Codex, Gemini CLI, and Cursor.
 
 ```bash
-# Collect credentials from all detected agents, then symlink
-caw auth collect --link
-
-# Or step by step:
-caw auth collect                  # gather into ~/.caw/auth/
-caw auth link                     # replace originals with symlinks
-
-# Check status
-caw auth status
-
-# Run a container with credentials
+caw auth setup                        # collect + symlink credentials
+caw auth status                       # check symlink state and token expiry
 docker run $(caw auth docker-flags) -v ./project:/work my-image
-
-# Restore original files
-caw auth unlink
+caw auth teardown                     # restore original files
 ```
 
-### Commands
-
-#### `caw auth collect`
-
-Reads credentials from `~/.claude/`, `~/.codex/`, `~/.gemini/`, `~/.config/cursor/`. Writes canonical files to `~/.caw/auth/`. Generates `manifest.json` and `setup-container.sh`.
-
-- Credential files (tokens, OAuth) are marked `strategy: symlink` — shared read-write
-- Config files (.claude.json, config.toml) are marked `strategy: copy` — cleaned/stripped for containers
-
-```bash
-caw auth collect                        # all agents
-caw auth collect --agents claude codex  # specific agents
-caw auth collect --force --link         # overwrite + symlink in one step
-```
-
-#### `caw auth link`
-
-Backs up originals to `~/.caw/auth/.backups/`, then replaces credential files with symlinks to `~/.caw/auth/`.
-
-```bash
-caw auth link
-caw auth link --dry-run    # preview changes
-caw auth link --force      # overwrite existing backups
-```
-
-#### `caw auth unlink`
-
-Restores original credential files from backups.
-
-```bash
-caw auth unlink
-caw auth unlink --dry-run
-```
-
-#### `caw auth status`
-
-Shows a table with symlink state, token expiry, and last modified time for all managed files.
-
-#### `caw auth docker-flags`
-
-Outputs the `-v` flag for Docker:
-
-```bash
-$ caw auth docker-flags
--v /home/user/.caw/auth:/tmp/caw_auth:rw
-```
-
-### Container setup
-
-The generated `setup-container.sh` runs inside the container (called from your entrypoint). It reads `manifest.json` and creates symlinks/copies:
-
-```bash
-# In your entrypoint.sh:
-if [ -f /tmp/caw_auth/setup-container.sh ]; then
-    /tmp/caw_auth/setup-container.sh /tmp/caw_auth /home/playground playground
-fi
-```
-
-Requires `jq` in the container image.
-
-### Directory structure
-
-```
-~/.caw/auth/
-├── manifest.json              # file map + metadata
-├── setup-container.sh         # POSIX script for container setup
-├── .backups/                  # originals before symlinking
-├── claude/
-│   ├── credentials.json       # credential (symlinked)
-│   └── config.json            # cleaned .claude.json (copied)
-├── codex/
-│   ├── auth.json              # credential (symlinked)
-│   └── config.toml            # cleaned config (copied)
-├── gemini/
-│   ├── oauth_creds.json       # credential (symlinked)
-│   └── ...                    # config files (copied)
-└── cursor/
-    ├── auth.json              # credential (symlinked)
-    └── cli-config.json        # cleaned config (copied)
-```
-
-### Supported agents
-
-| Agent | Credential files | Config files |
-|-------|-----------------|--------------|
-| Claude Code | `.claude/.credentials.json` | `.claude.json` (stripped to essential keys) |
-| Codex | `.codex/auth.json` | `.codex/config.toml` (local trust removed) |
-| Gemini CLI | `.gemini/oauth_creds.json` | `google_accounts.json`, `settings.json`, `installation_id` |
-| Cursor | `.config/cursor/auth.json` | `.cursor/cli-config.json` (stripped) |
-
-### Known limitation
-
-OAuth token rotation means a refresh returns a new refresh token, invalidating the old one. If two processes refresh simultaneously, one gets an invalid token. Don't run the same agent identity in two places at once.
+See [`caw/auth/README.md`](caw/auth/README.md) for details on how it works, container setup, and supported agents.
 
 ## License
 

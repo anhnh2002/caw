@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 keywords = []
-authors = [{ name = "Zijie", email = "" }]
+authors = [{ name = "Zijie", email = "zijie4@illinois.edu" }]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -33,8 +33,8 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/yourname/caw"
-Repository = "https://github.com/yourname/caw"
+Homepage = "https://github.com/zzjas/caw"
+Repository = "https://github.com/zzjas/caw"
 
 [project.scripts]
 caw = "caw.cli:main"
@@ -42,14 +42,7 @@ caw = "caw.cli:main"
 [tool.ruff]
 line-length = 120
 target-version = "py310"
-exclude = [
-    ".eggs",
-    ".git",
-    ".mypy_cache",
-    ".venv",
-    "build",
-    "dist",
-]
+exclude = [".eggs", ".git", ".mypy_cache", ".venv", "build", "dist"]
 
 [tool.ruff.lint]
 ignore = ["E203", "E266"]

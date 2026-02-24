@@ -1,4 +1,4 @@
-"""Tests for the programmatic auth API (collect, get_status, get_docker_flags)."""
+"""Tests for the programmatic auth API (setup, get_status, get_docker_flags)."""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from caw.auth import collect, get_docker_flags, get_status
+from caw.auth import setup, get_docker_flags, get_status
 from caw.auth.manifest import Manifest
 from caw.auth.status import AuthFileStatus
 
@@ -41,17 +41,17 @@ def _make_fake_home(tmp_path: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# collect() with custom dest_dir
+# setup() with custom dest_dir
 # ---------------------------------------------------------------------------
 
 
-class TestCollectCustomDir:
-    def test_collect_to_custom_dir(self, tmp_path: Path):
-        """collect() writes auth files to dest_dir instead of ~/.caw/auth."""
+class TestSetupCustomDir:
+    def test_setup_to_custom_dir(self, tmp_path: Path):
+        """setup() writes auth files to dest_dir instead of ~/.caw/auth."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
-        result = collect(
+        result = setup(
             agents=["claude"],
             source_home=str(home),
             dest_dir=dest,
@@ -64,84 +64,86 @@ class TestCollectCustomDir:
         assert (dest / "claude" / "credentials.json").exists()
         assert (dest / "claude" / "config.json").exists()
 
-    def test_collect_manifest_has_correct_home(self, tmp_path: Path):
+    def test_setup_manifest_has_correct_home(self, tmp_path: Path):
         """The manifest records the source home, not the dest dir."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         manifest = Manifest.load(dest / "manifest.json")
         assert manifest.host_home == str(home)
         assert "claude" in manifest.agents
 
-    def test_collect_default_dir_is_caw_auth(self, tmp_path: Path, monkeypatch):
-        """When dest_dir is None, collect uses ~/.caw/auth."""
+    def test_setup_default_dir_is_caw_auth(self, tmp_path: Path, monkeypatch):
+        """When dest_dir is None, setup uses ~/.caw/auth."""
         home = _make_fake_home(tmp_path)
         caw_auth = tmp_path / "default_caw" / "auth"
 
         # Monkeypatch AUTH_DIR so we don't touch the real filesystem
         import caw.auth.collector as collector_mod
+        import caw.auth.linker as linker_mod
 
         monkeypatch.setattr(collector_mod, "AUTH_DIR", caw_auth)
+        monkeypatch.setattr(linker_mod, "AUTH_DIR", caw_auth)
 
-        result = collect(agents=["claude"], source_home=str(home))
+        result = setup(agents=["claude"], source_home=str(home))
         assert result == caw_auth
         assert caw_auth.exists()
 
-    def test_collect_overwrites_existing(self, tmp_path: Path):
+    def test_setup_overwrites_existing(self, tmp_path: Path):
         """Re-collecting to the same dest_dir replaces old files."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
         first_manifest = (dest / "manifest.json").read_text()
 
         # Re-collect
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
         second_manifest = (dest / "manifest.json").read_text()
 
         # Both should be valid JSON
         json.loads(first_manifest)
         json.loads(second_manifest)
 
-    def test_collect_credential_content_correct(self, tmp_path: Path):
+    def test_setup_credential_content_correct(self, tmp_path: Path):
         """The collected credentials.json content matches the source."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         collected_creds = json.loads((dest / "claude" / "credentials.json").read_text())
         assert collected_creds["claudeAiOauth"]["accessToken"] == "tok123"
 
-    def test_collect_config_is_cleaned(self, tmp_path: Path):
+    def test_setup_config_is_cleaned(self, tmp_path: Path):
         """The collected config.json strips extra projects."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         config = json.loads((dest / "claude" / "config.json").read_text())
         # Should only have the container home project, not the original
         assert "/some/path" not in config.get("projects", {})
 
-    def test_collect_unknown_agent_raises(self, tmp_path: Path):
+    def test_setup_unknown_agent_raises(self, tmp_path: Path):
         """Collecting with an unknown agent name raises ValueError."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
 
         with pytest.raises(ValueError, match="Unknown agent"):
-            collect(agents=["nonexistent"], source_home=str(home), dest_dir=dest)
+            setup(agents=["nonexistent"], source_home=str(home), dest_dir=dest)
 
-    def test_collect_missing_credentials_exits(self, tmp_path: Path):
+    def test_setup_missing_credentials_exits(self, tmp_path: Path):
         """Collecting from a home without credentials raises SystemExit."""
         empty_home = tmp_path / "empty_home"
         empty_home.mkdir()
         dest = tmp_path / "my_auth"
 
         with pytest.raises(SystemExit):
-            collect(agents=["claude"], source_home=str(empty_home), dest_dir=dest)
+            setup(agents=["claude"], source_home=str(empty_home), dest_dir=dest)
 
 
 # ---------------------------------------------------------------------------
@@ -154,7 +156,7 @@ class TestGetStatus:
         """get_status() returns AuthFileStatus for each collected file."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         statuses = get_status(auth_dir=dest)
 
@@ -166,7 +168,7 @@ class TestGetStatus:
         """get_status() returns correct types for credential and config files."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         statuses = get_status(auth_dir=dest)
         types = {s.file: s.type for s in statuses}
@@ -178,7 +180,7 @@ class TestGetStatus:
         """All collected files should have exists=True."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         statuses = get_status(auth_dir=dest)
         assert all(s.exists for s in statuses)
@@ -192,7 +194,7 @@ class TestGetStatus:
         """get_status() filters by agent name when specified."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         # Asking for a non-existent agent should return empty
         statuses = get_status(agents=["codex"], auth_dir=dest)
@@ -202,7 +204,7 @@ class TestGetStatus:
         """get_status() reports token expiry for credential files."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         statuses = get_status(auth_dir=dest)
         cred_status = next(s for s in statuses if s.type == "credential")
@@ -221,7 +223,7 @@ class TestGetDockerFlags:
         """get_docker_flags() returns a proper -v flag string."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         flags = get_docker_flags(auth_dir=dest)
 
@@ -238,7 +240,7 @@ class TestGetDockerFlags:
         """The default mount point is /tmp/caw_auth."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         flags = get_docker_flags(auth_dir=dest)
         assert "/tmp/caw_auth" in flags
@@ -247,7 +249,7 @@ class TestGetDockerFlags:
         """The returned flag can be split and used in a docker command."""
         home = _make_fake_home(tmp_path)
         dest = tmp_path / "my_auth"
-        collect(agents=["claude"], source_home=str(home), dest_dir=dest)
+        setup(agents=["claude"], source_home=str(home), dest_dir=dest)
 
         flags = get_docker_flags(auth_dir=dest)
         parts = flags.split()

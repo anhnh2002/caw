@@ -20,7 +20,7 @@ def _load_manifest(auth_dir: Path | None = None) -> tuple[Manifest, Path]:
     resolved = auth_dir if auth_dir else AUTH_DIR
     manifest_path = resolved / "manifest.json"
     if not manifest_path.exists():
-        console.print("[red]Error: manifest.json not found. Run `caw auth collect` first.[/red]")
+        console.print("[red]Error: manifest.json not found. Run `caw auth setup` first.[/red]")
         raise SystemExit(1)
     return Manifest.load(manifest_path), resolved
 
@@ -106,7 +106,7 @@ def link(
     console.print(f"\n{action} {linked} file(s), skipped {skipped}.")
 
 
-def unlink(
+def teardown(
     agents: list[str] | None = None,
     dry_run: bool = False,
     auth_dir: Path | None = None,
@@ -116,7 +116,7 @@ def unlink(
     Removes symlinks and copies backups back to original locations.
 
     Args:
-        agents: Agent names to unlink, or None for all.
+        agents: Agent names to restore, or None for all.
         dry_run: Show what would be done without making changes.
         auth_dir: Custom auth directory. Defaults to ~/.caw/auth/.
     """

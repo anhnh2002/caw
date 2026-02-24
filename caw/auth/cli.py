@@ -12,7 +12,7 @@ app = typer.Typer(help="Manage credentials for Docker containers.")
 
 
 @app.command()
-def collect(
+def setup(
     agents: Annotated[
         Optional[list[str]],
         typer.Option("--agents", "-a", help="Agents to include (claude, codex, gemini, cursor, or all)"),
@@ -21,42 +21,26 @@ def collect(
         str,
         typer.Option("--source-home", help="Source home directory to read credentials from"),
     ] = str(Path.home()),
-    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite existing auth dir")] = False,
-    link: Annotated[bool, typer.Option("--link", "-l", help="Also link credential files after collecting")] = False,
+    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite existing auth dir and backups")] = False,
 ):
-    """Collect credentials from host into ~/.caw/auth/."""
-    from .collector import collect as do_collect
+    """Collect credentials from host into ~/.caw/auth/ and symlink them."""
+    from .collector import setup as do_setup
 
-    do_collect(agents=agents or ["all"], source_home=source_home, force=force, link=link)
+    do_setup(agents=agents or ["all"], source_home=source_home, force=force)
 
 
 @app.command()
-def link(
+def teardown(
     agents: Annotated[
         Optional[list[str]],
-        typer.Option("--agents", "-a", help="Agents to link"),
-    ] = None,
-    dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
-    force: Annotated[bool, typer.Option("--force", "-f", help="Overwrite existing backups")] = False,
-):
-    """Replace host credential files with symlinks to ~/.caw/auth/."""
-    from .linker import link as do_link
-
-    do_link(agents=agents, dry_run=dry_run, force=force)
-
-
-@app.command()
-def unlink(
-    agents: Annotated[
-        Optional[list[str]],
-        typer.Option("--agents", "-a", help="Agents to unlink"),
+        typer.Option("--agents", "-a", help="Agents to restore"),
     ] = None,
     dry_run: Annotated[bool, typer.Option("--dry-run", "-n", help="Show what would be done")] = False,
 ):
     """Restore original credential files from backups."""
-    from .linker import unlink as do_unlink
+    from .linker import teardown as do_teardown
 
-    do_unlink(agents=agents, dry_run=dry_run)
+    do_teardown(agents=agents, dry_run=dry_run)
 
 
 @app.command("status")
@@ -80,5 +64,5 @@ def docker_flags():
     try:
         typer.echo(do_get_docker_flags())
     except FileNotFoundError:
-        typer.echo("Error: manifest.json not found. Run `caw auth collect` first.", err=True)
+        typer.echo("Error: manifest.json not found. Run `caw auth setup` first.", err=True)
         raise typer.Exit(1)

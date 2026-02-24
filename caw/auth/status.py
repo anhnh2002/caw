@@ -177,7 +177,7 @@ def status(agents: list[str] | None = None, auth_dir: str | Path | None = None) 
     resolved_dir = Path(auth_dir) if auth_dir else AUTH_DIR
     manifest_path = resolved_dir / "manifest.json"
     if not manifest_path.exists():
-        console.print("[yellow]No auth directory found.[/yellow] Run `caw auth collect` first.")
+        console.print("[yellow]No auth directory found.[/yellow] Run `caw auth setup` first.")
         return
 
     manifest = Manifest.load(manifest_path)

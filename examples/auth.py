@@ -1,15 +1,15 @@
-"""Programmatic auth: collect credentials, check status, and get docker flags."""
+"""Programmatic auth: set up credentials, check status, and get docker flags."""
 
 from pathlib import Path
 
-from caw.auth import collect, get_docker_flags, get_status
+from caw.auth import setup, get_docker_flags, get_status
 
 
 def main():
-    # Collect credentials to a custom directory (instead of ~/.caw/auth)
+    # Set up credentials to a custom directory (instead of ~/.caw/auth)
     auth_dir = Path("./my_project_auth")
-    print("=== Collecting credentials ===")
-    collect(agents=["all"], dest_dir=auth_dir)
+    print("=== Setting up credentials ===")
+    setup(agents=["all"], dest_dir=auth_dir)
 
     # Check status of all collected auth files
     print("\n=== Auth file status ===")

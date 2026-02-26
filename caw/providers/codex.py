@@ -457,10 +457,12 @@ class CodexSession(ProviderSession):
 
     def _parse_usage(self, event: dict[str, Any]) -> UsageStats:
         u = event.get("usage", {})
+        raw_input = u.get("input_tokens", 0)
+        cached = u.get("cached_input_tokens", 0)
         usage = UsageStats(
-            input_tokens=u.get("input_tokens", 0),
+            input_tokens=raw_input - cached,
             output_tokens=u.get("output_tokens", 0),
-            cache_read_tokens=u.get("cached_input_tokens", 0),
+            cache_read_tokens=cached,
             cache_write_tokens=0,
         )
         usage.cost_usd = compute_cost("codex", self._model or "", usage)

@@ -212,7 +212,10 @@ class Session:
         # Auto-save trajectory if configured
         if self._traj_path is not None:
             try:
-                self.save_trajectory(self._traj_path)
+                p = Path(self._traj_path)
+                p.parent.mkdir(parents=True, exist_ok=True)
+                with open(p, "w") as f:
+                    json.dump(traj.to_dict(), f, indent=2)
             except Exception:
                 logger.warning("Failed to save trajectory to %s", self._traj_path, exc_info=True)
         return traj

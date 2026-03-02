@@ -31,8 +31,8 @@ from caw.provider import Provider, ProviderSession
 # -- Tool group → Claude Code tool name mapping --------------------------------
 
 _MODEL_TIER_MAP: dict[ModelTier, str] = {
-    ModelTier.STRONGEST: "claude-opus-4-6",
-    ModelTier.FAST: "claude-haiku-4-5-20251001",
+    ModelTier.STRONGEST: os.environ.get("ANTHROPIC_MODEL", "claude-opus-4-6"),
+    ModelTier.FAST: os.environ.get("ANTHROPIC_SMALL_FAST_MODEL", "claude-haiku-4-5-20251001"),
 }
 
 _TOOL_GROUP_MAP: dict[ToolGroup, list[str]] = {

@@ -79,6 +79,7 @@ _LIMIT_RESET_RE = re.compile(
     r"resets\s+(\d{1,2})(?::(\d{2}))?\s*(am|pm)\s*\(([^)]+)\)",
     re.IGNORECASE,
 )
+_USAGE_EXHAUSTED_RE = re.compile(r"\bout of (?:extra\s+)?usage\b", re.IGNORECASE)
 
 _DEFAULT_WAIT_MINUTES = 60
 
@@ -133,7 +134,8 @@ def detect_usage_limit(text: str) -> int | None:
     the caller-supplied default is used (see ``_DEFAULT_WAIT_MINUTES``).
     """
     lower = text.lower()
-    if "limit" not in lower or "resets" not in lower:
+    has_limit_phrase = "limit" in lower or _USAGE_EXHAUSTED_RE.search(text) is not None
+    if "resets" not in lower or not has_limit_phrase:
         return None
     return _parse_reset_minutes(text) or _DEFAULT_WAIT_MINUTES
 

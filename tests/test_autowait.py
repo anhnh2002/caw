@@ -42,6 +42,13 @@ class TestDetectUsageLimit:
         assert isinstance(result, int)
         assert result >= 1
 
+    def test_out_of_extra_usage_message(self):
+        text = "You're out of extra usage · resets 9pm (America/Chicago)"
+        result = detect_usage_limit(text)
+        assert result is not None
+        assert isinstance(result, int)
+        assert result >= 1
+
     def test_limit_with_unparseable_time_returns_default(self):
         # Contains both keywords but no parseable reset time
         text = "You've hit your limit and it resets sometime soon"

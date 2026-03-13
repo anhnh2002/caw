@@ -168,4 +168,4 @@ See [`caw/auth/README.md`](caw/auth/README.md) for details on how it works, cont
 
 ## License
 
-MIT
+[Apache-2.0](LICENSE)

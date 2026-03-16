@@ -166,7 +166,10 @@ def _generate_setup_container_sh(manifest: Manifest) -> str:
         }
 
         # Start the guard if there are credential pairs to watch
-        if [ -f "$GUARD_PAIRS" ] && [ -s "$GUARD_PAIRS" ]; then
+        # Skip credential guard when using Bedrock (no credential sync needed)
+        if [ "${CLAUDE_CODE_USE_BEDROCK:-0}" = "1" ]; then
+            echo "[setup-container] Bedrock mode — skipping credential guard."
+        elif [ -f "$GUARD_PAIRS" ] && [ -s "$GUARD_PAIRS" ]; then
             # Install inotify-tools if not present
             if ! command -v inotifywait >/dev/null 2>&1; then
                 echo "[setup-container] Installing inotify-tools..."

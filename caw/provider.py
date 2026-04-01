@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
 
-from caw.models import MCPServer, ModelTier, ToolGroup, Trajectory, Turn
+from caw.models import InteractiveResult, MCPServer, ModelTier, ToolGroup, Trajectory, Turn
 
 
 class ProviderSession(ABC):
@@ -114,6 +114,20 @@ class Provider(ABC):
         Override in subclasses to disable tools and minimise side-effects.
         """
         return {}
+
+    def start_interactive(
+        self, initial_prompt: str, mcp_servers: list[MCPServer], capture_bytes: int = 0, **kwargs: Any
+    ) -> InteractiveResult:
+        """Launch the provider binary interactively with an initial prompt.
+
+        Hands control to the user's terminal — stdin/stdout/stderr are
+        inherited so the user interacts with the agent directly.
+        A copy of stdout is captured via a pty.
+
+        Returns an :class:`InteractiveResult` with the exit code and
+        captured output.
+        """
+        raise NotImplementedError(f"{self.name} provider does not support interactive mode.")
 
     @abstractmethod
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ProviderSession:

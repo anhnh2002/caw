@@ -8,6 +8,7 @@ from caw.storage import JsonlWriter, SessionStore
 from caw.models import (
     AgentSpec,
     ContentBlock,
+    InteractiveResult,
     MCPServer,
     MCPTool,
     ModelTier,
@@ -48,6 +49,7 @@ __all__ = [
     "CodexProvider",
     "JsonlWriter",
     "ContentBlock",
+    "InteractiveResult",
     "Display",
     "DisplayMode",
     "get_global_display",

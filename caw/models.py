@@ -329,6 +329,22 @@ class Trajectory:
 # -- Serialization helpers for content blocks --------------------------------
 
 
+@dataclass
+class InteractiveResult:
+    """Result from an interactive agent session."""
+
+    exit_code: int
+    output: str = ""  # raw terminal output (may include ANSI escape sequences)
+
+    @property
+    def session_id(self) -> str | None:
+        """Extract the session ID from Claude Code's exit output, if present."""
+        import re
+
+        m = re.search(r"--resume\s+(\S+)", self.output)
+        return m.group(1) if m else None
+
+
 def _block_to_dict(block: ContentBlock) -> dict[str, Any]:
     if isinstance(block, TextBlock):
         return {"type": "text", "text": block.text}

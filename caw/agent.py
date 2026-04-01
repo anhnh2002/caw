@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from caw.display import get_global_display
-from caw.models import AgentSpec, MCPServer, ModelTier, ToolGroup, ToolUse, Trajectory, Turn
+from caw.models import AgentSpec, InteractiveResult, MCPServer, ModelTier, ToolGroup, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
 from caw.toolkit import ToolKit
@@ -427,6 +427,61 @@ class Agent:
         if isinstance(model, ModelTier):
             model = self.provider.resolve_model(model)
         return self.provider.check_limit(model=model)
+
+    def interactive(self, initial_prompt: str, capture_bytes: int = 0, **kwargs: Any) -> InteractiveResult:
+        """Launch the provider binary interactively with an initial prompt.
+
+        The user interacts with the agent directly in their terminal.
+        A copy of stdout is captured via a pty.  MCP tool servers are
+        started before launch and stopped after the process exits.
+
+        Parameters
+        ----------
+        initial_prompt:
+            The first message sent to the agent.
+        capture_bytes:
+            Maximum bytes of terminal output to keep (tail).
+            ``0`` (default) means capture everything.
+
+        Returns an :class:`InteractiveResult` with the exit code and
+        captured terminal output.
+        """
+        merged = {**self._kwargs, **kwargs}
+
+        # Remove session-only concerns
+        merged.pop("auto_wait", None)
+        merged.pop("metadata", None)
+
+        # Resolve model tier
+        model = merged.get("model")
+        if isinstance(model, ModelTier):
+            merged["model"] = self.provider.resolve_model(model)
+
+        # Resolve tool restrictions — default to ALL (user is present)
+        tools = merged.pop("tools", None)
+        if tools is not None:
+            restrictions = self.provider.resolve_tool_restrictions(tools)
+            merged.update(restrictions)
+
+        # Start MCP tool server handles
+        all_handles: list[Any] = list(self._tool_servers)
+        for handle in all_handles:
+            handle.start_sync()
+
+        all_mcp = list(self._mcp_servers)
+        for handle in all_handles:
+            all_mcp.append(MCPServer(name=handle.server_id, url=handle.url))
+
+        try:
+            return self.provider.start_interactive(
+                initial_prompt, mcp_servers=all_mcp, capture_bytes=capture_bytes, **merged
+            )
+        finally:
+            for handle in all_handles:
+                try:
+                    handle.stop_sync()
+                except Exception:
+                    pass
 
     def completion(self, message: str, **kwargs: Any) -> Trajectory:
         """Send a single message and return the complete trajectory.

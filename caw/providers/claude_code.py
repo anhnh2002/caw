@@ -494,6 +494,12 @@ class ClaudeCodeProvider(Provider):
             return {}
         return {"disallowed_tools": disallowed}
 
+    def _limit_probe_kwargs(self) -> dict[str, Any]:
+        all_tools: list[str] = []
+        for names in _TOOL_GROUP_MAP.values():
+            all_tools.extend(names)
+        return {"disallowed_tools": all_tools}
+
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ClaudeCodeSession:
         model = kwargs.get("model")
         system_prompt = kwargs.get("system_prompt")

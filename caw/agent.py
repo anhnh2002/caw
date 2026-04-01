@@ -413,6 +413,21 @@ class Agent:
             handles.append(handle)
         return handles
 
+    def check_limit(self) -> int | None:
+        """Check if the provider's usage limit is currently active.
+
+        Sends a minimal test prompt to detect whether the configured
+        provider and model are currently rate-limited.  Returns the
+        estimated number of minutes until the limit resets, or ``None``
+        if no limit is detected.
+
+        This incurs a small token cost for the probe request.
+        """
+        model = self._kwargs.get("model")
+        if isinstance(model, ModelTier):
+            model = self.provider.resolve_model(model)
+        return self.provider.check_limit(model=model)
+
     def completion(self, message: str, **kwargs: Any) -> Trajectory:
         """Send a single message and return the complete trajectory.
 

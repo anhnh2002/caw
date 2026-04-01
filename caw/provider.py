@@ -80,6 +80,41 @@ class Provider(ABC):
         """
         return {}
 
+    def check_limit(self, model: str | None = None) -> int | None:
+        """Probe whether the provider's usage limit is currently active.
+
+        Sends a minimal test prompt and checks if the response indicates a
+        usage-limit.  Returns the estimated number of minutes to wait before
+        the limit resets, or ``None`` if no limit is detected.
+
+        This incurs a small token cost for the probe request.
+        """
+        from caw.display import get_global_display, set_global_display
+
+        old_display = get_global_display()
+        set_global_display(None)
+        try:
+            session = self.start_session(
+                mcp_servers=[],
+                model=model,
+                system_prompt="Reply with the single word 'ok'.",
+                **self._limit_probe_kwargs(),
+            )
+            try:
+                turn = session.send("hi")
+                return session.detect_usage_limit(turn)
+            finally:
+                session.end()
+        finally:
+            set_global_display(old_display)
+
+    def _limit_probe_kwargs(self) -> dict[str, Any]:
+        """Extra session kwargs for the limit-check probe.
+
+        Override in subclasses to disable tools and minimise side-effects.
+        """
+        return {}
+
     @abstractmethod
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> ProviderSession:
         """Create and return a new provider session."""

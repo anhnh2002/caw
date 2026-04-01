@@ -550,6 +550,9 @@ class CodexProvider(Provider):
         logger.warning("Codex: no file/exec groups enabled; defaulting to read-only sandbox.")
         return {"sandbox": "read-only"}
 
+    def _limit_probe_kwargs(self) -> dict[str, Any]:
+        return {"sandbox": "read-only"}
+
     def start_session(self, mcp_servers: list[MCPServer], **kwargs: Any) -> CodexSession:
         return CodexSession(
             mcp_servers=mcp_servers,

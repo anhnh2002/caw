@@ -8,6 +8,7 @@ from caw.faststats import FastStats
 from caw.storage import JsonlWriter, SessionStore
 from caw.models import (
     AgentSpec,
+    AgentStreamEvent,
     ContentBlock,
     InteractiveResult,
     MCPServer,
@@ -24,6 +25,7 @@ from caw.models import (
 from caw.provider import Provider, ProviderSession
 from caw.providers.claude_code import ClaudeCodeProvider
 from caw.providers.codex import CodexProvider
+from caw.providers.openai_agents import OpenAIAgentsProvider
 from caw.mcp import (
     MCPServerHandle,
     create_mcp_http_server_bundle,
@@ -42,12 +44,17 @@ register_provider("claude_code", ClaudeCodeProvider)
 register_provider("claude", ClaudeCodeProvider)
 register_provider("cc", ClaudeCodeProvider)
 register_provider("codex", CodexProvider)
+register_provider("openai_agents", OpenAIAgentsProvider)
+register_provider("openai_agent", OpenAIAgentsProvider)
+register_provider("oa", OpenAIAgentsProvider)
 
 __all__ = [
     "Agent",
     "AgentSpec",
+    "AgentStreamEvent",
     "ClaudeCodeProvider",
     "CodexProvider",
+    "OpenAIAgentsProvider",
     "JsonlWriter",
     "ContentBlock",
     "InteractiveResult",

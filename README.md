@@ -49,6 +49,7 @@ with agent.start_session() as session:
 |----------|-----|---------------|
 | Claude Code | `claude` | `claude_code` |
 | Codex | `codex` | `codex` |
+| OpenAI Agents SDK | none | `openai_agents` |
 
 Set via constructor, environment variable, or at runtime:
 
@@ -58,6 +59,35 @@ agent = Agent(provider="codex")
 os.environ["CAW_PROVIDER"] = "codex"
 # or
 agent.set_provider("codex")
+```
+
+OpenAI-compatible model endpoints can be used through the OpenAI Agents SDK
+provider:
+
+```python
+from caw import Agent
+
+agent = Agent(
+    provider="openai_agents",
+    model="your-model",
+    base_url="https://provider.example/v1",
+    api_key="sk-...",
+)
+
+traj = agent.completion("Read README.md and summarize it")
+```
+
+The OpenAI Agents SDK provider also exposes the lower-level streaming loop:
+
+```python
+from caw import Agent
+
+async def main():
+    agent = Agent(provider="openai_agents", model="your-model", api_key="sk-...")
+    with agent.start_session() as session:
+        async for event in session.stream_async("Inspect this repository", max_turns=20):
+            if event.type == "tool_call":
+                print(event.block.name)
 ```
 
 ### MCP tool servers
@@ -150,6 +180,8 @@ Sessions are persisted to JSONL in `caw_data/` by default.
 | `CAW_PROVIDER` | Default provider (`claude_code`, `codex`) |
 | `CAW_MODEL` | Default model name |
 | `CAW_EFFORT` | Default reasoning effort (`high`, `medium`, `low`) |
+| `CAW_OPENAI_BASE_URL` | OpenAI-compatible endpoint for `openai_agents` |
+| `CAW_OPENAI_API_KEY` | API key for `openai_agents` |
 
 ---
 

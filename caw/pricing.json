@@ -11,5 +11,12 @@
       "cached_input": 0.175,
       "output": 14.0
     }
+  },
+  "openai_agents": {
+    "anthropic/claude-sonnet-4-6": {
+      "input": 3,
+      "cached_input": 0.3,
+      "output": 15
+    }
   }
 }

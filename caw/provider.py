@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 from typing import Any
 
-from caw.models import InteractiveResult, MCPServer, ModelTier, ToolGroup, Trajectory, Turn
+from caw.models import AgentStreamEvent, InteractiveResult, MCPServer, ModelTier, ToolGroup, Trajectory, Turn
 
 
 class ProviderSession(ABC):
@@ -50,6 +50,15 @@ class ProviderSession(ABC):
     def set_step_callback(self, callback: Callable[[list], None] | None) -> None:
         """Set callback invoked after each step within send()."""
         pass  # default no-op; concrete providers override
+
+    async def stream_async(self, message: str, **kwargs: Any) -> AsyncIterator[AgentStreamEvent]:
+        """Stream a turn as normalized events.
+
+        Providers with native async streaming should override this. The base
+        implementation intentionally does not wrap ``send()`` because callers
+        use this API to manipulate the agentic loop.
+        """
+        raise NotImplementedError("This provider session does not support async streaming.")
 
 
 class Provider(ABC):

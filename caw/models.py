@@ -118,6 +118,17 @@ ContentBlock = Union[TextBlock, ThinkingBlock, ToolUse]
 
 
 @dataclass
+class AgentStreamEvent:
+    """A normalized streaming event emitted while an agent turn is running."""
+
+    type: str
+    block: ContentBlock | None = None
+    raw: Any = None
+    turn: Turn | None = None
+    is_final: bool = False
+
+
+@dataclass
 class UsageStats:
     """Token usage and cost statistics."""
 

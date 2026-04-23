@@ -12,11 +12,12 @@ import tempfile
 import threading
 import time
 import uuid as uuid_mod
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
 from caw.display import get_global_display
-from caw.models import AgentSpec, InteractiveResult, MCPServer, ModelTier, ToolGroup, ToolUse, Trajectory, Turn
+from caw.models import AgentSpec, AgentStreamEvent, InteractiveResult, MCPServer, ModelTier, ToolGroup, ToolUse, Trajectory, Turn
 from caw.provider import Provider, ProviderSession
 from caw.storage import SessionStore
 from caw.toolkit import ToolKit
@@ -137,6 +138,46 @@ class Session:
             self._async_send_lock = asyncio.Lock()
         async with self._async_send_lock:
             return await asyncio.to_thread(self.send, message)
+
+    async def stream_async(self, message: str, **kwargs: Any) -> AsyncIterator[AgentStreamEvent]:
+        """Stream a turn as normalized events.
+
+        This is available for providers that expose native agent-loop
+        streaming. It preserves caw's trajectory persistence by saving
+        partial steps and appending the final turn when the stream completes.
+        """
+        if self._readonly:
+            raise RuntimeError("Cannot send messages on a loaded session")
+        if self._async_send_lock is None:
+            self._async_send_lock = asyncio.Lock()
+
+        async with self._async_send_lock:
+
+            def _save_step(blocks, _msg=message):
+                traj = self.trajectory
+                partial_turn = Turn(input=_msg, output=list(blocks))
+                traj.turns.append(partial_turn)
+                if self._traj_path:
+                    p = Path(self._traj_path)
+                    p.parent.mkdir(parents=True, exist_ok=True)
+                    p.write_text(json.dumps(traj.to_dict(), indent=2))
+                if self._store:
+                    self._store._save_trajectory(traj)
+
+            self._session.set_step_callback(_save_step)
+            try:
+                async for event in self._session.stream_async(message, **kwargs):
+                    if event.is_final and event.turn is not None:
+                        _attach_subagent_trajectories(event.turn, self._subagent_traj_dir)
+                        if self._store is not None:
+                            self._store.append_turn(
+                                event.turn,
+                                self.trajectory,
+                                raw_output=self._session.last_raw_output,
+                            )
+                    yield event
+            finally:
+                self._session.set_step_callback(None)
 
     def send(self, message: str) -> Turn:
         """Send a message and get the agent's response turn.

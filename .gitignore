@@ -53,3 +53,5 @@ Thumbs.db
 
 # caw session data
 caw_data/
+
+*.ipynb

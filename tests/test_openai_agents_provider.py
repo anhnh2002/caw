@@ -37,6 +37,27 @@ def test_tool_group_maps_to_session_kwargs():
         provider.resolve_tool_restrictions(ToolGroup.ALL - ToolGroup.ALL)
 
 
+def test_provider_start_session_uses_session_default_max_turns():
+    session = OpenAIAgentsProvider().start_session(
+        mcp_servers=[],
+        model="test-model",
+        api_key="key",
+    )
+
+    assert session._max_turns == 100
+
+
+def test_provider_start_session_preserves_explicit_max_turns():
+    session = OpenAIAgentsProvider().start_session(
+        mcp_servers=[],
+        model="test-model",
+        api_key="key",
+        max_turns=12,
+    )
+
+    assert session._max_turns == 12
+
+
 def test_local_tools_are_gated_by_group(tmp_path):
     reader = _make_local_tools(tmp_path, ToolGroup.READER)
     reader_names = {tool.name for tool in reader}
@@ -173,6 +194,54 @@ async def test_stream_async_preserves_explicit_prompt_cache_retention(monkeypatc
     assert events[-1].is_final
     assert captured["run_config"].model_settings.prompt_cache_retention == "in_memory"
     assert captured["run_config"].model_settings.include_usage is True
+
+
+@pytest.mark.asyncio
+async def test_stream_async_connects_and_cleans_up_mcp_servers(monkeypatch):
+    monkeypatch.setattr("agents.ItemHelpers.text_message_output", lambda item: item.text)
+    captured = {}
+
+    class FakeMCPServer:
+        def __init__(self):
+            self.connected = False
+            self.cleaned_up = False
+
+        async def __aenter__(self):
+            self.connected = True
+            return self
+
+        async def __aexit__(self, exc_type, exc_value, traceback):
+            self.cleaned_up = True
+            self.connected = False
+
+    fake_mcp_server = FakeMCPServer()
+
+    class FakeResult:
+        raw_responses = []
+
+        async def stream_events(self):
+            yield SimpleNamespace(
+                type="run_item_stream_event",
+                item=SimpleNamespace(type="message_output_item", raw_item=None, text="done"),
+            )
+
+        def to_input_list(self):
+            return [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "done"}]
+
+    def fake_run_streamed(agent, *args, **kwargs):
+        captured["server_connected_during_run"] = agent.mcp_servers[0].connected
+        return FakeResult()
+
+    monkeypatch.setattr("agents.Runner.run_streamed", fake_run_streamed)
+
+    session = OpenAIAgentsSession(mcp_servers=[], model="test-model", api_key="key")
+    monkeypatch.setattr(session, "_sdk_mcp_servers", lambda: [fake_mcp_server])
+    events = [event async for event in session.stream_async("hi")]
+
+    assert events[-1].is_final
+    assert captured["server_connected_during_run"] is True
+    assert fake_mcp_server.cleaned_up is True
+    assert fake_mcp_server.connected is False
 
 
 def test_usage_from_result_uses_openai_agents_pricing():

@@ -11,6 +11,7 @@ import threading
 import time
 import uuid
 from collections.abc import AsyncIterator, Callable
+from contextlib import AsyncExitStack
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -363,14 +364,6 @@ class OpenAIAgentsSession(ProviderSession):
         sdk_tools = _make_local_tools(self._workspace, self._tools)
         sdk_mcp_servers = self._sdk_mcp_servers()
 
-        sdk_agent = SDKAgent(
-            name="caw",
-            instructions=self._system_prompt,
-            model=sdk_model,
-            tools=sdk_tools,
-            mcp_servers=sdk_mcp_servers,
-        )
-
         model_settings = kwargs.get("model_settings", self._model_settings)
         if model_settings is None and self._reasoning:
             model_settings = ModelSettings(reasoning={"effort": self._reasoning})
@@ -402,80 +395,92 @@ class OpenAIAgentsSession(ProviderSession):
             input_items = message
 
         started = time.perf_counter()
-        result = Runner.run_streamed(
-            sdk_agent,
-            input=input_items,
-            context=context,
-            max_turns=max_turns,
-            hooks=hooks,
-            run_config=run_config,
-        )
+        async with AsyncExitStack() as stack:
+            for server in sdk_mcp_servers:
+                await stack.enter_async_context(server)
 
-        async for raw_event in result.stream_events():
-            raw_lines.append(repr(raw_event))
+            sdk_agent = SDKAgent(
+                name="caw",
+                instructions=self._system_prompt,
+                model=sdk_model,
+                tools=sdk_tools,
+                mcp_servers=sdk_mcp_servers,
+            )
 
-            if raw_events:
-                yield AgentStreamEvent(type="raw", raw=raw_event)
+            result = Runner.run_streamed(
+                sdk_agent,
+                input=input_items,
+                context=context,
+                max_turns=max_turns,
+                hooks=hooks,
+                run_config=run_config,
+            )
 
-            if getattr(raw_event, "type", "") != "run_item_stream_event":
-                if getattr(raw_event, "type", "") == "agent_updated_stream_event":
-                    yield AgentStreamEvent(type="agent_updated", raw=raw_event)
-                continue
+            async for raw_event in result.stream_events():
+                raw_lines.append(repr(raw_event))
 
-            item = getattr(raw_event, "item", None)
-            item_type = getattr(item, "type", "")
+                if raw_events:
+                    yield AgentStreamEvent(type="raw", raw=raw_event)
 
-            if item_type == "tool_call_item":
-                block = ToolUse(
-                    id=_tool_call_id(getattr(item, "raw_item", None)),
-                    name=_tool_call_name(item),
-                    arguments=_parse_tool_arguments(getattr(item, "raw_item", None)),
-                )
-                blocks.append(block)
-                tool_blocks[block.id] = block
-                if display:
-                    display.on_tool_call(block)
-                self._emit_step(blocks)
-                yield AgentStreamEvent(type="tool_call", block=block, raw=raw_event)
+                if getattr(raw_event, "type", "") != "run_item_stream_event":
+                    if getattr(raw_event, "type", "") == "agent_updated_stream_event":
+                        yield AgentStreamEvent(type="agent_updated", raw=raw_event)
+                    continue
 
-            elif item_type == "tool_call_output_item":
-                raw_item = getattr(item, "raw_item", None)
-                tool_id = str(_get_field(raw_item, "call_id") or _get_field(raw_item, "tool_call_id") or "")
-                block = tool_blocks.get(tool_id)
-                if block is None:
-                    block = ToolUse(id=tool_id or str(uuid.uuid4()), name=_tool_call_name(item), arguments={})
+                item = getattr(raw_event, "item", None)
+                item_type = getattr(item, "type", "")
+
+                if item_type == "tool_call_item":
+                    block = ToolUse(
+                        id=_tool_call_id(getattr(item, "raw_item", None)),
+                        name=_tool_call_name(item),
+                        arguments=_parse_tool_arguments(getattr(item, "raw_item", None)),
+                    )
                     blocks.append(block)
                     tool_blocks[block.id] = block
-                block.output = _stringify(getattr(item, "output", None))
-                status = str(_get_field(raw_item, "status", "")).lower()
-                block.is_error = status in {"failed", "error"}
-                if display:
-                    display.on_tool_result(block)
-                self._emit_step(blocks)
-                yield AgentStreamEvent(type="tool_result", block=block, raw=raw_event)
-
-            elif item_type == "message_output_item":
-                text = ItemHelpers.text_message_output(item)
-                if text:
-                    block = TextBlock(text=text)
-                    blocks.append(block)
                     if display:
-                        display.on_text(block)
+                        display.on_tool_call(block)
                     self._emit_step(blocks)
-                    yield AgentStreamEvent(type="text", block=block, raw=raw_event)
+                    yield AgentStreamEvent(type="tool_call", block=block, raw=raw_event)
 
-            elif item_type == "reasoning_item":
-                text = self._reasoning_text(getattr(item, "raw_item", None))
-                if text:
-                    block = ThinkingBlock(text=text)
-                    blocks.append(block)
+                elif item_type == "tool_call_output_item":
+                    raw_item = getattr(item, "raw_item", None)
+                    tool_id = str(_get_field(raw_item, "call_id") or _get_field(raw_item, "tool_call_id") or "")
+                    block = tool_blocks.get(tool_id)
+                    if block is None:
+                        block = ToolUse(id=tool_id or str(uuid.uuid4()), name=_tool_call_name(item), arguments={})
+                        blocks.append(block)
+                        tool_blocks[block.id] = block
+                    block.output = _stringify(getattr(item, "output", None))
+                    status = str(_get_field(raw_item, "status", "")).lower()
+                    block.is_error = status in {"failed", "error"}
                     if display:
-                        display.on_thinking(block)
+                        display.on_tool_result(block)
                     self._emit_step(blocks)
-                    yield AgentStreamEvent(type="thinking", block=block, raw=raw_event)
+                    yield AgentStreamEvent(type="tool_result", block=block, raw=raw_event)
 
-        self._last_raw_output = "\n".join(raw_lines)
-        self._input_items = result.to_input_list()
+                elif item_type == "message_output_item":
+                    text = ItemHelpers.text_message_output(item)
+                    if text:
+                        block = TextBlock(text=text)
+                        blocks.append(block)
+                        if display:
+                            display.on_text(block)
+                        self._emit_step(blocks)
+                        yield AgentStreamEvent(type="text", block=block, raw=raw_event)
+
+                elif item_type == "reasoning_item":
+                    text = self._reasoning_text(getattr(item, "raw_item", None))
+                    if text:
+                        block = ThinkingBlock(text=text)
+                        blocks.append(block)
+                        if display:
+                            display.on_thinking(block)
+                        self._emit_step(blocks)
+                        yield AgentStreamEvent(type="thinking", block=block, raw=raw_event)
+
+            self._last_raw_output = "\n".join(raw_lines)
+            self._input_items = result.to_input_list()
 
         usage = self._usage_from_result(result)
         duration_ms = int((time.perf_counter() - started) * 1000)
@@ -595,7 +600,7 @@ class OpenAIAgentsProvider(Provider):
             tools=kwargs.get("tools", ToolGroup.ALL - ToolGroup.INTERACTION),
             reasoning=kwargs.get("reasoning"),
             workspace=kwargs.get("workspace"),
-            max_turns=kwargs.get("max_turns", 10),
+            max_turns=kwargs.get("max_turns", 100),
             tracing_disabled=kwargs.get("tracing_disabled", True),
             model_settings=kwargs.get("model_settings"),
             run_config=kwargs.get("run_config"),

@@ -289,7 +289,7 @@ class OpenAIAgentsSession(ProviderSession):
         tools: ToolGroup = ToolGroup.ALL - ToolGroup.INTERACTION,
         reasoning: str | None = None,
         workspace: str | Path | None = None,
-        max_turns: int = 10,
+        max_turns: int = 100,
         tracing_disabled: bool = True,
         model_settings: Any = None,
         run_config: Any = None,

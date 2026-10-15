@@ -58,6 +58,48 @@ def test_compute_cost_unknown_model_is_zero():
     assert pricing.compute_cost("opencode", "openai/unknown", _usage(1_000_000, 1_000_000)) == 0.0
 
 
+def test_codex_falls_back_to_opencode_openai_rates():
+    # No codex entry for gpt-5.5; borrow opencode's openai/gpt-5.5 rates.
+    assert pricing.get_pricing("codex", "gpt-5.5") == {
+        "input": 5.0,
+        "cached_input": 0.5,
+        "output": 30.0,
+    }
+
+
+def test_codex_gpt_6_1_sol_is_priced():
+    assert pricing.get_pricing("codex", "gpt-6.1-sol") == {
+        "input": 2.0,
+        "cached_input": 0.1,
+        "output": 10.0,
+    }
+
+
+def test_codex_own_entry_wins_over_fallback():
+    pricing.set_user_pricing("codex", "gpt-5.5", {"input": 1.0, "output": 2.0})
+    assert pricing.get_pricing("codex", "gpt-5.5") == {"input": 1.0, "output": 2.0}
+
+
+def test_fallback_is_codex_only():
+    assert pricing.get_pricing("claude_code", "gpt-5.5") == {}
+
+
+def test_unknown_model_warns_once(caplog):
+    pricing._warned_unpriced.clear()
+    with caplog.at_level("WARNING", logger="caw.pricing"):
+        assert pricing.compute_cost("codex", "gpt-nope", _usage(10, 10)) == 0.0
+        assert pricing.compute_cost("codex", "gpt-nope", _usage(10, 10)) == 0.0
+    warnings = [r for r in caplog.records if "No pricing for codex/gpt-nope" in r.getMessage()]
+    assert len(warnings) == 1
+
+
+def test_zero_usage_does_not_warn(caplog):
+    pricing._warned_unpriced.clear()
+    with caplog.at_level("WARNING", logger="caw.pricing"):
+        pricing.compute_cost("codex", "gpt-nope", _usage())
+    assert not caplog.records
+
+
 # --- user overrides ---------------------------------------------------------
 
 

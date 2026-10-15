@@ -5,11 +5,13 @@ from __future__ import annotations
 import atexit
 import json
 import logging
+import os
 import re
 import subprocess
 import threading
 import uuid
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 from typing import Any
 
 from caw.display import Display, get_global_display
@@ -55,6 +57,32 @@ _DEFAULT_WAIT_MINUTES = 60
 # completion: ...)"). These must not abort the turn — codex retries internally
 # and emits turn.failed only once retries are exhausted.
 _TRANSIENT_STREAM_ERROR_RE = re.compile(r"^Reconnecting\.{3}\s+\d+/\d+")
+
+# -- Default-model resolution -------------------------------------------------
+
+# Top-level ``model = "..."`` in config.toml (before the first ``[table]``).
+_CONFIG_MODEL_RE = re.compile(r"""^\s*model\s*=\s*["']([^"']+)["']""")
+
+
+def _codex_config_model() -> str | None:
+    """The default model from ``$CODEX_HOME/config.toml`` (``~/.codex``), if set.
+
+    This is what ``codex exec`` runs when no ``-m`` is passed, so it is the
+    model that has to be priced.  Only top-level keys are read; profiles are
+    not resolved.
+    """
+    home = os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")
+    try:
+        text = (Path(home) / "config.toml").read_text()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        if line.lstrip().startswith("["):
+            break
+        match = _CONFIG_MODEL_RE.match(line)
+        if match:
+            return match.group(1)
+    return None
 
 
 def _parse_codex_reset_minutes(text: str) -> int | None:
@@ -189,6 +217,7 @@ class CodexSession(ProviderSession):
         # what confines `--sandbox workspace-write` to a particular tree.
         self._cwd = cwd
         self._extra_config = dict(extra_config or {})
+        self._resolved_model: str | None = None
         self._created_at = datetime.now(timezone.utc).isoformat()
         self._has_sent = False
         self._thread_id: str | None = None
@@ -217,6 +246,18 @@ class CodexSession(ProviderSession):
         """Build ``-c`` flags for the caller's own config overrides."""
         return _build_extra_config_args(self._extra_config)
 
+    def _effective_model(self) -> str:
+        """The model codex actually runs: ``-m``, a ``model`` override, or config.toml."""
+        if self._model:
+            return self._model
+        if self._resolved_model is None:
+            override = self._extra_config.get("model")
+            if isinstance(override, str) and override:
+                self._resolved_model = override
+            else:
+                self._resolved_model = _codex_config_model() or ""
+        return self._resolved_model
+
     # ------------------------------------------------------------------
     # Core send (streaming Popen)
     # ------------------------------------------------------------------
@@ -228,7 +269,7 @@ class CodexSession(ProviderSession):
             if not self._has_sent:
                 display.on_metadata(
                     agent="codex",
-                    model=self._model or "",
+                    model=self._effective_model(),
                     session=self._session_id,
                 )
             display.on_user_message(message)
@@ -236,7 +277,7 @@ class CodexSession(ProviderSession):
             log_metadata(
                 self._logger,
                 agent="codex",
-                model=self._model or "",
+                model=self._effective_model(),
                 session=self._session_id,
             )
         log_user_message(self._logger, message)
@@ -554,7 +595,7 @@ class CodexSession(ProviderSession):
             cache_read_tokens=cached,
             cache_write_tokens=0,
         )
-        usage.cost_usd = compute_cost("codex", self._model or "", usage)
+        usage.cost_usd = compute_cost("codex", self._effective_model(), usage)
         return usage
 
     # ------------------------------------------------------------------
@@ -578,7 +619,7 @@ class CodexSession(ProviderSession):
     def trajectory(self) -> Trajectory:
         return Trajectory(
             agent="codex",
-            model=self._model or "",
+            model=self._effective_model(),
             session_id=self._session_id,
             created_at=self._created_at,
             system_prompt=self._system_prompt or "",

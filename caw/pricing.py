@@ -65,22 +65,53 @@ def _agent_tables(table: dict[str, Any]) -> dict[str, dict[str, Any]]:
 # --- effective resolution ---------------------------------------------------
 
 
-def get_pricing(agent: str, model: str) -> dict[str, float]:
-    """Effective per-1M-token rates for *agent*/*model* (baked overlaid by user).
-
-    Returns only the rate fields that are actually configured, as floats; an
-    empty dict means no pricing is known (cost then computes as ``0``).
-    """
-    agent = config.canonical_provider(agent)
+def _entry_rates(agent: str, model: str) -> dict[str, float]:
+    """Rates configured for exactly *agent*/*model* (baked overlaid by user)."""
     baked = _baked_pricing().get(agent, {}).get(model, {})
     user = _user_pricing().get(agent, {}).get(model, {})
     merged = {**baked, **(user if isinstance(user, dict) else {})}
     return {k: float(v) for k, v in merged.items() if k in _RATE_FIELDS and isinstance(v, (int, float))}
 
 
+# Agents that run OpenAI models under their bare name and can borrow opencode's
+# ``openai/<model>`` rates when they have no entry of their own.
+_OPENAI_FALLBACK_AGENTS: frozenset[str] = frozenset({"codex"})
+
+
+def get_pricing(agent: str, model: str) -> dict[str, float]:
+    """Effective per-1M-token rates for *agent*/*model* (baked overlaid by user).
+
+    A codex model with no ``codex`` entry falls back to the opencode
+    ``openai/<model>`` entry, so newer OpenAI models are priced without
+    duplicating the table.  Returns only the rate fields that are actually
+    configured, as floats; an empty dict means no pricing is known (cost then
+    computes as ``0``).
+    """
+    agent = config.canonical_provider(agent)
+    rates = _entry_rates(agent, model)
+    if not rates and model and agent in _OPENAI_FALLBACK_AGENTS:
+        rates = _entry_rates("opencode", f"openai/{model}")
+    return rates
+
+
+_warned_unpriced: set[tuple[str, str]] = set()
+
+
 def compute_cost(agent: str, model: str, usage: UsageStats) -> float:
     """Compute cost in USD from token counts and the effective pricing config."""
     pricing = get_pricing(agent, model)
+    if not pricing and usage.total_tokens > 0:
+        key = (config.canonical_provider(agent), model)
+        if key not in _warned_unpriced:
+            _warned_unpriced.add(key)
+            logger.warning(
+                "No pricing for %s/%s; cost is reported as 0. Set it with: "
+                "caw pricing set %s %s --input <usd/1M> --output <usd/1M>",
+                key[0],
+                model or "<default model>",
+                key[0],
+                model or "<model>",
+            )
     cost = (
         usage.input_tokens * pricing.get("input", 0.0)
         + usage.cache_read_tokens * pricing.get("cached_input", 0.0)
